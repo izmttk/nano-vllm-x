@@ -7,7 +7,7 @@ import sys
 import psutil
 import signal
 from utils import kill_process_tree, kill_itself_when_parent_died
-
+from communication_op import broadcast_tensor_dict
 from parallel_state import (
     get_tp_group,
     get_pp_group,
@@ -40,10 +40,14 @@ def run_worker(
         )
         initialize_model_parallel(tp_size, pp_size, tp_rank, pp_rank)
 
+        # ======= TEST BEGINS =======
+
         print(f"Rank {rank}: Allocated {torch.cuda.memory_allocated(rank)/1e9:.2f} GB, "
             f"Reserved {torch.cuda.memory_reserved(rank)/1e9:.2f} GB")
         print(f"Worker {rank} started with TP rank {tp_rank}, PP rank {pp_rank}.")
+        print(get_tp_group().rank(), get_tp_group().size(), dist.get_rank(), dist.get_rank(get_tp_group()), dist.get_process_group_ranks(get_tp_group()))
 
+        # ======= TEST torch gather_object =======
         local_state = {
             "tp_rank": tp_rank,
             "pp_rank": pp_rank,
@@ -52,14 +56,29 @@ def run_worker(
             "device": torch.cuda.current_device() if torch.cuda.is_available() else "cpu",
         }
 
-        all_states = [None] * dist.get_world_size(get_tp_group())
+        all_states = [None] * get_tp_group().size()
         dist.all_gather_object(all_states, local_state, group=get_tp_group())
         print(f"Worker {rank} gathered states: {all_states} in TP.")
 
 
-        all_states = [None] * dist.get_world_size(get_pp_group())
+        all_states = [None] * get_pp_group().size()
         dist.all_gather_object(all_states, local_state, group=get_pp_group())
         print(f"Worker {rank} gathered states: {all_states} in PP.")
+
+        # ======== TEST broadcast_tensor_dict ========
+        if tp_rank == 0:
+            tensor_dict = {
+                "tensor1": torch.randn(3,4).cuda(),
+                "tensor2": torch.randn(4,3).cuda(),
+            }
+        else:
+            tensor_dict = None
+
+        tensor_dict = broadcast_tensor_dict(tensor_dict, 0)
+
+        print(f"tp_rank: {tp_rank}, pp_rank: {pp_rank}, rank: {rank}, device: {torch.cuda.current_device()}, tensor_dict: {tensor_dict}")
+
+        # ======== TEST ENDS ========
 
         destroy_model_parallel()
         destroy_distributed_environment()
@@ -79,7 +98,8 @@ def lanuch_processes(
     processes: list[mp.Process] = []
     mp.set_start_method("spawn", force=True)
 
-    assert device_ids is None or len(device_ids) == tp_size * pp_size
+    assert device_ids is None or len(device_ids) == tp_size * pp_size , \
+        "device_ids should have the same length as tp_size * pp_size"
 
     if device_ids is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, device_ids))
@@ -113,7 +133,7 @@ if __name__ == "__main__":
             tp_size=tp_size,
             pp_size=pp_size,
             backend="nccl",
-            init_method="tcp://localhost:36504",
+            init_method="tcp://localhost:44444",
             device_ids=device_ids,
         )
     except Exception as e:

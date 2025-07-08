@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.distributed as dist
-from parallel_state import get_tp_group, get_pp_group
+from parallel_state import get_tp_group
+from communication_op import tensor_model_parallel_all_gather
 
 class ColumnParallelLayer(nn.Module):
     """Linear layer with column parallelism.
@@ -33,11 +35,6 @@ class ColumnParallelLayer(nn.Module):
                        bias can be fused with other element-wise operations. we
                        skip adding bias but instead return it.
         params_dtype: Data type for the parameters.
-        quant_config: Quantization configure.
-        output_sizes: list of output sizes packed into one output, like for QKV
-                       the list would be size 3.
-        prefix: The name of the layer in the state dict, including all parents
-                        (e.g. model.layers.0.qkv_proj)
     """
     
     def __init__(
@@ -48,7 +45,8 @@ class ColumnParallelLayer(nn.Module):
         gather_output: bool = True,
         skip_bias_add: bool = False,
         params_dtype: torch.dtype = torch.float32,
-        prefix='',
+        tp_size: int = None,
+        tp_rank: int = None
     ):
         super().__init__()
         self.input_size = input_size
@@ -57,18 +55,23 @@ class ColumnParallelLayer(nn.Module):
         self.gather_output = gather_output
         self.skip_bias_add = skip_bias_add
         self.params_dtype = params_dtype
-        self.prefix = prefix
 
-        tp_group = get_tp_group()
-        tp_size = dist.get_world_size(tp_group)
-        tp_rank = dist.get_rank(tp_group)
+        if tp_size is None:
+            tp_size = get_tp_group().size()
+        if tp_rank is None:
+            tp_rank = get_tp_group().rank()
         
         self.tp_size = tp_size
         self.tp_rank = tp_rank
+
+
+        assert output_size % tp_size == 0, f"output_size {output_size} must be divisible by tp_size {tp_size}"
+        self.output_size_per_partition = output_size // tp_size
         
         self.weight = nn.Parameter(
             torch.empty(
-                (input_size, output_size // tp_size),
+                self.output_size_per_partition,
+                self.input_size,
                 dtype=params_dtype
             )
         )
@@ -76,7 +79,7 @@ class ColumnParallelLayer(nn.Module):
         if bias:
             self.bias = nn.Parameter(
                 torch.empty(
-                    (output_size // tp_size,),
+                    self.output_size_per_partition,
                     dtype=params_dtype
                 )
             )
@@ -84,19 +87,11 @@ class ColumnParallelLayer(nn.Module):
             self.register_parameter('bias', None)
             
     def forward(self, x: torch.Tensor):
-        if x.shape[-1] != self.input_size:
-            raise ValueError(f"Input tensor must have last dimension of size {self.input_size}, but got {x.shape[-1]}.")
-
-        # Perform the column parallel matrix multiplication
-        output = torch.matmul(x, self.weight)
-
-        if self.bias is not None and not self.skip_bias_add:
-            output += self.bias
-
+        bias = self.bias if not self.skip_bias_add else None
+        output_parallel = F.linear(x, self.weight, bias)
         if self.gather_output:
-            # Gather outputs from all TP ranks
-            output_list = [torch.empty_like(output) for _ in range(self.tp_size)]
-            dist.all_gather(output_list, output, group=get_tp_group())
-            output = torch.cat(output_list, dim=-1)
-
-        return output
+            output = tensor_model_parallel_all_gather(output_parallel)
+        else:
+            output = output_parallel
+        output_bias = self.bias if self.skip_bias_add else None
+        return output, output_bias
