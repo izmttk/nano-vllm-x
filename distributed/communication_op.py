@@ -3,7 +3,7 @@ import torch.distributed as dist
 
 from parallel_state import get_tp_group
 
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any
 
 def tensor_model_parallel_all_reduce(input: torch.Tensor) -> torch.Tensor:
     """All-reduce the input tensor across model parallel group."""
@@ -78,7 +78,7 @@ def tensor_model_parallel_reduce_scatter(input: torch.Tensor,
 
 def tensor_model_parallel_gather(input_: torch.Tensor,
                                  dst: int = 0,
-                                 dim: int = -1) -> Optional[torch.Tensor]:
+                                 dim: int = -1) -> torch.Tensor | None:
     """Gather the input tensor across model parallel group.
     NOTE: We assume that the input tensor is on the same device across
     all the ranks.
@@ -110,8 +110,8 @@ def tensor_model_parallel_gather(input_: torch.Tensor,
         output_tensor = None
     return output_tensor
 
-def broadcast_tensor_dict(tensor_dict: Optional[dict[Any, Union[torch.Tensor, Any]]] = None,
-                          src: int = 0):
+def broadcast_tensor_dict(tensor_dict: dict[Any, torch.Tensor] | None = None,
+                          src: int = 0) -> dict[Any, torch.Tensor] | None:
     """Broadcast the input tensor dictionary.
     NOTE: `src` is the local rank of the source rank.
     """
@@ -125,24 +125,35 @@ def broadcast_tensor_dict(tensor_dict: Optional[dict[Any, Union[torch.Tensor, An
 
     rank_in_group = tp_group.rank()
 
+    metadata_list: list[tuple[Any, str, torch.dtype, torch.Size]] | None = []
     if rank_in_group == src:
-        metalist = []
+        assert isinstance(tensor_dict, dict), f"Expecting a dictionary, got {type(tensor_dict)}"
         for key, tensor in tensor_dict.items():
-            metalist.append((key, tensor.device.type, tensor.dtype, tensor.shape))
-    else:
-        metalist = None
+            metadata_list.append((key, tensor.device.type, tensor.dtype, tensor.shape))
 
-    # 先广播 metalist
-    recv = [metalist]
+    # 先广播 metadata_list
+    recv = [metadata_list]
     dist.broadcast_object_list(recv, group_src=src, group=tp_group)
-    metalist = recv[0]
+    metadata_list = recv[0]
 
-    result = {}
-    for key, device, dtype, shape in metalist:
+    result: dict[Any, torch.Tensor] = {}
+    async_handles: list[dist.Work] = []
+    for key, device, dtype, shape in metadata_list:
         if rank_in_group == src:
+            assert isinstance(tensor_dict, dict), f"Expecting a dictionary, got {type(tensor_dict)}"
             tensor = tensor_dict[key]
         else:
             tensor = torch.empty(shape, dtype=dtype, device=device)
-        dist.broadcast(tensor, group_src=src)  # 直接张量广播
+            if tensor.numel() == 0:
+                # Skip broadcasting empty tensors.
+                result[key] = tensor
+                continue
+
+        handle = dist.broadcast(tensor, group_src=src, group=tp_group, async_op=True)  # 直接张量广播
+        if handle is not None:
+            async_handles.append(handle)
         result[key] = tensor
+
+    for async_handle in async_handles:
+        async_handle.wait()
     return result

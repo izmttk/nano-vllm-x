@@ -3,19 +3,22 @@ from torch.distributed import ProcessGroup
 import torch.distributed as dist
 import datetime
 
-WORLD: ProcessGroup = None
-TP: ProcessGroup = None
-PP: ProcessGroup = None
+WORLD: ProcessGroup | None = None
+TP: ProcessGroup | None = None
+PP: ProcessGroup | None = None
 
 def get_world_group() -> ProcessGroup:
+    assert WORLD is not None, "Distributed process group is not initialized."
     return WORLD
 
 def get_tp_group() -> ProcessGroup:
     """Get the tensor parallel process group."""
+    assert TP is not None, "Tensor parallel process group is not initialized."
     return TP
 
 def get_pp_group() -> ProcessGroup:
     """Get the pipeline parallel process group."""
+    assert PP is not None, "Pipeline parallel process group is not initialized."
     return PP
 
 def initialize_model_parallel(tp_size: int, pp_size: int, tp_rank: int, pp_rank: int):
@@ -75,28 +78,28 @@ def destroy_distributed_environment():
         dist.destroy_process_group()
     WORLD = None
 
-def get_first_rank(group: ProcessGroup = None) -> int:
+def get_first_rank(group: ProcessGroup) -> int:
     group_ranks = dist.get_process_group_ranks(group)
     return group_ranks[0]
 
-def get_last_rank(group: ProcessGroup = None) -> int:
+def get_last_rank(group: ProcessGroup) -> int:
     group_ranks = dist.get_process_group_ranks(group)
     return group_ranks[-1]
 
-def is_first_rank(group: ProcessGroup = None) -> bool:
+def is_first_rank(group: ProcessGroup) -> bool:
     rank = dist.get_rank(group)
     return rank == get_first_rank(group)
 
-def is_last_rank(group: ProcessGroup = None) -> bool:
+def is_last_rank(group: ProcessGroup) -> bool:
     rank = dist.get_rank(group)
     return rank == get_last_rank(group)
 
-def prev_rank(group: ProcessGroup = None) -> int:
+def prev_rank(group: ProcessGroup) -> int:
     rank = dist.get_rank(group)
     group_ranks = dist.get_process_group_ranks(group)
     return group_ranks[rank - 1]
 
-def next_rank(group: ProcessGroup = None) -> int:
+def next_rank(group: ProcessGroup) -> int:
     rank = dist.get_rank(group)
     group_ranks = dist.get_process_group_ranks(group)
     return group_ranks[rank + 1]

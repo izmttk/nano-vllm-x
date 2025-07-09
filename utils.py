@@ -14,7 +14,7 @@ def kill_itself_when_parent_died():
     else:
         logger.warning("kill_itself_when_parent_died is only supported in linux.")
 
-def kill_process_tree(parent_pid = None, include_parent: bool = True, skip_pid: int = None):
+def kill_process_tree(parent_pid = None, include_parent: bool = True, skip_pid: int | None = None):
     """Kill the process and all its child processes."""
     # Remove sigchld handler to avoid spammy logs.
     if threading.current_thread() is threading.main_thread():

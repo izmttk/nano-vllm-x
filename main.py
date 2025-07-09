@@ -7,8 +7,8 @@ import sys
 import psutil
 import signal
 from utils import kill_process_tree, kill_itself_when_parent_died
-from communication_op import broadcast_tensor_dict
-from parallel_state import (
+from distributed.communication_op import broadcast_tensor_dict
+from distributed.parallel_state import (
     get_tp_group,
     get_pp_group,
     init_distributed_environment,
@@ -27,6 +27,8 @@ def run_worker(
 ):
     kill_itself_when_parent_died()
     parent_process = psutil.Process().parent()
+
+    assert parent_process is not None, "Parent process not found."
 
     world_size = tp_size * pp_size
     rank = pp_rank * tp_size + tp_rank
@@ -93,7 +95,7 @@ def lanuch_processes(
     pp_size: int = 1,
     backend: str = "nccl",
     init_method: str = "env://",
-    device_ids: list[int] = None,
+    device_ids: list[int] | None = None,
 ):
     processes: list[mp.Process] = []
     mp.set_start_method("spawn", force=True)
