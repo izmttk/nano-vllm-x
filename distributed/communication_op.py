@@ -1,14 +1,14 @@
 import torch
 import torch.distributed as dist
 
-from parallel_state import get_tp_group
+from .parallel_state import get_tp_group
 
 from typing import Any
 
-def tensor_model_parallel_all_reduce(input: torch.Tensor) -> torch.Tensor:
+def tensor_model_parallel_all_reduce(input: torch.Tensor, op = dist.ReduceOp.SUM) -> torch.Tensor:
     """All-reduce the input tensor across model parallel group."""
     tp_group = get_tp_group()
-    dist.all_reduce(input, group=tp_group)
+    dist.all_reduce(input, group=tp_group, op=op)
     return input
 
 def tensor_model_parallel_all_gather(input: torch.Tensor,
@@ -40,7 +40,8 @@ def tensor_model_parallel_all_gather(input: torch.Tensor,
     return output_tensor
 
 def tensor_model_parallel_reduce_scatter(input: torch.Tensor,
-                                         dim: int = -1) -> torch.Tensor:
+                                         dim: int = -1,
+                                         op = dist.ReduceOp.SUM) -> torch.Tensor:
     """Reduce-Scatter the input tensor across model parallel group."""
 
     tp_group = get_tp_group()
@@ -70,7 +71,8 @@ def tensor_model_parallel_reduce_scatter(input: torch.Tensor,
     # Perform reduce-scatter operation
     dist.reduce_scatter_tensor(output_tensor,
                                 input_tensor,
-                                group=tp_group)
+                                group=tp_group,
+                                op=op)
 
     # Reshape before returning
     return output_tensor.movedim(0, dim).contiguous()
@@ -125,7 +127,7 @@ def broadcast_tensor_dict(tensor_dict: dict[Any, torch.Tensor] | None = None,
 
     rank_in_group = tp_group.rank()
 
-    metadata_list: list[tuple[Any, str, torch.dtype, torch.Size]] | None = []
+    metadata_list: list[tuple[Any, str, torch.dtype, torch.Size]] = []
     if rank_in_group == src:
         assert isinstance(tensor_dict, dict), f"Expecting a dictionary, got {type(tensor_dict)}"
         for key, tensor in tensor_dict.items():

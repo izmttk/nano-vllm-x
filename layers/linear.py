@@ -5,14 +5,86 @@ import torch.distributed as dist
 from distributed.parallel_state import get_tp_group
 from distributed.communication_op import tensor_model_parallel_all_gather, tensor_model_parallel_all_reduce
 
-class ColumnParallelLayer(nn.Module):
+from .utils import divide, ensure_divisibility
+
+class ReplicatedLinear(nn.Module):
+    """Replicated linear layer.
+
+    Args:
+        input_size: input dimension of the linear layer.
+        output_size: output dimension of the linear layer.
+        bias: If true, add bias.
+        skip_bias_add: If true, skip adding bias but instead return it.
+        params_dtype: Data type for the parameters.
+        quant_config: Quantization configure.
+        prefix: The name of the layer in the state dict, including all parents
+                        (e.g. model.layers.0.qkv_proj)
+        return_bias: If true, return bias together with outputs in forward pass.
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        bias: bool = True,
+        skip_bias_add: bool = False,
+        params_dtype: torch.dtype | None = None,
+        return_bias: bool = True,
+    ):
+
+        super().__init__()
+        self.input_size = input_size
+        self.output_size = output_size
+        self.skip_bias_add = skip_bias_add
+        self.params_dtype = params_dtype
+        self.return_bias = return_bias
+
+        tp_size = get_tp_group().size()
+        tp_rank = get_tp_group().rank()
+        
+        self.tp_size = tp_size
+        self.tp_rank = tp_rank
+
+        self.weight = nn.Parameter(
+            torch.empty(
+                self.output_size,
+                self.input_size,
+                dtype=params_dtype
+            )
+        )
+        setattr(self.weight, "weight_loader", self.weight_loader)
+
+        if bias:
+            self.bias = nn.Parameter(
+                torch.empty(
+                    self.output_size,
+                    dtype=self.params_dtype
+                )
+            )
+            setattr(self.bias, "weight_loader", self.weight_loader)
+        else:
+            self.register_parameter("bias", None)
+
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        assert param.shape == loaded_weight.shape
+        param.data.copy_(loaded_weight)
+
+    def forward(self, x: torch.Tensor):
+        bias = self.bias if not self.skip_bias_add else None
+        output = F.linear(x, self.weight, bias)
+        output_bias = self.bias if self.skip_bias_add else None
+        if not self.return_bias:
+            return output
+        return output, output_bias
+
+class ColumnParallelLinear(nn.Module):
     """Linear layer with column parallelism.
 
     The linear layer is defined as Y = XA + b. A is parallelized along
     its second dimension as A = [A_1, ..., A_p].
     
     before: Y = X A + b
-    after: [Y_1, ..., Y_p] = [X A_1 + b, ..., X A_p + b]
+    after: [Y_1, ..., Y_p] = [X A_1 + b_1, ..., X A_p + b_p]
 
     where:
 
@@ -45,7 +117,7 @@ class ColumnParallelLayer(nn.Module):
         bias: bool = True,
         gather_output: bool = True,
         skip_bias_add: bool = False,
-        params_dtype: torch.dtype = torch.float32,
+        params_dtype: torch.dtype  | None = None,
         return_bias: bool = True
     ):
         super().__init__()
@@ -61,10 +133,7 @@ class ColumnParallelLayer(nn.Module):
         
         self.tp_size = tp_size
         self.tp_rank = tp_rank
-
-
-        assert output_size % tp_size == 0, f"output_size {output_size} must be divisible by tp_size {tp_size}"
-        self.output_size_per_partition = output_size // tp_size
+        self.output_size_per_partition = divide(output_size, tp_size)
         
         self.weight = nn.Parameter(
             torch.empty(
@@ -73,6 +142,7 @@ class ColumnParallelLayer(nn.Module):
                 dtype=params_dtype
             )
         )
+        setattr(self.weight, "weight_loader", self.weight_loader)
         
         if bias:
             self.bias = nn.Parameter(
@@ -81,10 +151,21 @@ class ColumnParallelLayer(nn.Module):
                     dtype=params_dtype
                 )
             )
+            setattr(self.bias, "weight_loader", self.weight_loader)
         else:
             self.register_parameter('bias', None)
+
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        # 需注意，Linear 的 weight 形状为 (output_size, input_size)
+        output_dim = 0
+        param_data = param.data
+        shard_size = param_data.shape[output_dim]
+        start_idx = self.tp_rank * shard_size
+        loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
+        assert param_data.shape == loaded_weight.shape
+        param.data.copy_(loaded_weight)
             
-    def forward(self, x: torch.Tensor) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]:
+    def forward(self, x: torch.Tensor):
         bias = self.bias if not self.skip_bias_add else None
         output_parallel = F.linear(x, self.weight, bias)
         if self.gather_output:
@@ -96,7 +177,7 @@ class ColumnParallelLayer(nn.Module):
             return output
         return output, output_bias
 
-class RowParallelLayer(nn.Module):
+class RowParallelLinear(nn.Module):
     """Linear layer with row parallelism.
 
     The linear layer is defined as Y = XA + b. A is parallelized along
@@ -135,7 +216,7 @@ class RowParallelLayer(nn.Module):
         bias: bool = True,
         input_is_parallel: bool = False,
         skip_bias_add: bool = False,
-        params_dtype: torch.dtype = torch.float32,
+        params_dtype: torch.dtype | None = None,
         reduce_results: bool = True,
         return_bias: bool = True
     ):
@@ -153,9 +234,7 @@ class RowParallelLayer(nn.Module):
         self.tp_size = tp_size
         self.tp_rank = tp_rank
 
-
-        assert input_size % tp_size == 0, f"input_size {input_size} must be divisible by tp_size {tp_size}"
-        self.input_size_per_partition = input_size // tp_size
+        self.input_size_per_partition = divide(input_size, tp_size)
         self.weight = nn.Parameter(
             torch.empty(
                 self.input_size_per_partition,
@@ -163,6 +242,7 @@ class RowParallelLayer(nn.Module):
                 dtype=params_dtype
             )
         )
+        setattr(self.weight, "weight_loader", self.weight_loader)
         if bias:
             self.bias = nn.Parameter(
                 torch.empty(
@@ -170,10 +250,21 @@ class RowParallelLayer(nn.Module):
                     dtype=params_dtype
                 )
             )
+            setattr(self.bias, "weight_loader", self.weight_loader)
         else:
             self.register_parameter('bias', None)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]:
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        # 需注意，Linear 的 weight 形状为 (output_size, input_size)
+        input_dim = 1
+        param_data = param.data
+        shard_size = param_data.shape[input_dim]
+        start_idx = self.tp_rank * shard_size
+        loaded_weight = loaded_weight.narrow(input_dim, start_idx, shard_size)
+        assert param_data.shape == loaded_weight.shape
+        param.data.copy_(loaded_weight)
+
+    def forward(self, x: torch.Tensor):
         if self.input_is_parallel:
             input_parallel = x
         else:
@@ -194,3 +285,215 @@ class RowParallelLayer(nn.Module):
         if not self.return_bias:
             return output
         return output, output_bias
+
+
+class QKVParallelLinear(ColumnParallelLinear):
+    """Linear layers for the attention's QKV transformation.
+
+    Linear layers for the linear transformation of the query, key, and value
+    vectors in the attention layer. The weight matrix is concatenated along
+    the output dimension. The layer is parallelized along the head dimension.
+    When the number of key/value heads is smaller than the number of query
+    heads (e.g., multi-query/grouped-query attention), the key/value head may
+    be replicated while the query heads are partitioned.
+
+    Args:
+        hidden_size: input hidden state size of the transformer.
+        head_size: size of each attention head.
+        total_num_heads: total number of attention query heads.
+        total_num_kv_heads: total number of attention key/value heads. If
+                            None, assume total_num_kv_heads = total_num_heads.
+        bias: If true, add bias.
+        skip_bias_add: This was added to enable performance optimizations where
+                       bias can be fused with other element-wise operations. we
+                       skip adding bias but instead return it.
+        params_dtype: Data type for the parameters.
+        return_bias: If true, return bias together with outputs in forward pass.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        head_size: int,
+        total_num_heads: int,
+        total_num_kv_heads: int | None = None,
+        bias: bool = True,
+        skip_bias_add: bool = False,
+        params_dtype: torch.dtype |  None = None,
+        return_bias: bool = True
+    ):
+        self.hidden_size = hidden_size
+        self.head_size = head_size
+        self.total_num_heads = total_num_heads
+        self.total_num_kv_heads = total_num_kv_heads if total_num_kv_heads is not None else total_num_heads
+        self.params_dtype = params_dtype
+
+        tp_size = get_tp_group().size()
+        self.num_heads = divide(total_num_heads, tp_size)
+
+        if tp_size > self.total_num_kv_heads:
+            self.num_kv_heads = 1
+            self.num_kv_head_replicas = divide(tp_size, self.total_num_kv_heads)
+        else:
+            self.num_kv_heads = divide(self.total_num_kv_heads, tp_size)
+            self.num_kv_head_replicas = 1
+
+        input_size = hidden_size
+        output_size = (self.num_heads + 2 * self.num_kv_heads) * tp_size * self.head_size
+
+        super().__init__(
+            input_size=input_size,
+            output_size=output_size,
+            bias=bias,
+            gather_output=False,
+            skip_bias_add=skip_bias_add,
+            params_dtype=params_dtype,
+            return_bias=return_bias
+        )
+
+    def weight_loader(
+        self,
+        param: nn.Parameter,
+        loaded_weight: torch.Tensor,
+        loaded_shard_id: str | None = None
+    ):
+        # 需注意，Linear 的 weight 形状为 (output_size, input_size)
+        output_dim = 0
+        param_data = param.data
+
+        if loaded_shard_id is None:
+            shard_offsets = [
+                # (shard_id, shard_offset, shard_size)
+                (
+                    "q", 
+                    0,
+                    self.total_num_heads * self.head_size
+                ),
+                (
+                    "k",
+                    self.total_num_heads * self.head_size,
+                    self.total_num_kv_heads * self.head_size,
+                ),
+                (
+                    "v",
+                    (self.total_num_heads + self.total_num_kv_heads) * self.head_size,
+                    self.total_num_kv_heads * self.head_size,
+                ),
+            ]
+            for shard_id, shard_offset, shard_size in shard_offsets:
+                loaded_weight_shard = loaded_weight.narrow(output_dim, shard_offset, shard_size)
+                self.weight_loader(param, loaded_weight_shard, shard_id)
+            return
+
+        if loaded_shard_id == "q":
+            shard_offset = 0
+            shard_size = self.num_heads * self.head_size
+        elif loaded_shard_id == "k":
+            shard_offset = self.num_heads * self.head_size
+            shard_size = self.num_kv_heads * self.head_size
+        elif loaded_shard_id == "v":
+            shard_offset = (self.num_heads + self.num_kv_heads) * self.head_size
+            shard_size = self.num_kv_heads * self.head_size
+        else:
+            assert False, f"Invalid shard_id {loaded_shard_id}"
+
+        param_data = param_data.narrow(output_dim, shard_offset, shard_size)
+        if loaded_shard_id == "q":
+            shard_id = self.tp_rank
+        else:
+            shard_id = self.tp_rank // self.num_kv_head_replicas
+        start_idx = shard_id * shard_size
+        loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
+
+        assert param_data.shape == loaded_weight.shape
+        param_data.copy_(loaded_weight)
+
+class MergedColumnParallelLinear(ColumnParallelLinear):
+    """Packed linear layers with column parallelism.
+
+    Similar to ColumnParallelLinear, but the weight matrix is concatenated
+    along the output dimension. When the weight matrix is loaded, the
+    different partitions are sharded separately.
+
+    Y = X [A1, A2, ..., An] + b
+    each Ai is separated into p shards along the output dimension as Ai = [Ai_1, Ai_2, ..., Ai_p].
+
+    for rank 0: Y_1 = X [A1_1, A2_1, ..., An_1] + b_1
+    for rank 1: Y_2 = X [A1_2, A2_2, ..., An_2] + b_2
+    ...
+    for rank p: Y_p = X [A1_p, A2_p, ..., An_p] + b_p
+
+    Args:
+        input_size: input dimension of the linear layer.
+        output_sizes: list of output dimensions of the linear layer.
+        bias: If true, add bias.
+        gather_output: If true, call all-gather on output and make the output
+                       available to all GPUs, otherwise, every GPU will have
+                       its own output.
+        skip_bias_add: This was added to enable performance optimizations where
+                       bias can be fused with other element-wise operations. we
+                       skip adding bias but instead return it.
+        params_dtype: Data type for the parameters.
+        quant_config: Quantization configure.
+        prefix: The name of the layer in the state dict, including all parents
+                        (e.g. model.layers.0.qkv_proj)
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        output_sizes: list[int],
+        bias: bool = True,
+        gather_output: bool = False,
+        skip_bias_add: bool = False,
+        params_dtype: torch.dtype | None = None,
+    ):
+        self.output_sizes = output_sizes
+
+        tp_size = get_tp_group().size()
+
+        for output_size in output_sizes:
+            ensure_divisibility(output_size, tp_size)
+
+        super().__init__(
+            input_size=input_size,
+            output_size=sum(output_sizes),
+            bias=bias,
+            gather_output=gather_output,
+            skip_bias_add=skip_bias_add,
+            params_dtype=params_dtype,
+        )
+    
+    def weight_loader(
+        self,
+        param: nn.Parameter,
+        loaded_weight: torch.Tensor,
+        loaded_shard_id: int | None = None
+    ):
+        # 需注意，Linear 的 weight 形状为 (output_size, input_size)
+        output_dim = 0
+        param_data = param.data
+
+        if loaded_shard_id is None:
+            current_shard_offset = 0
+            shard_offsets: list[tuple[int, int, int]] = []
+            for i, output_size in enumerate(self.output_sizes):
+                # (shard_id, shard_offset, shard_size)
+                shard_offsets.append((i, current_shard_offset, output_size))
+                current_shard_offset += output_size
+            for shard_id, shard_offset, shard_size in shard_offsets:
+                loaded_weight_shard = loaded_weight.narrow(output_dim, shard_offset, shard_size)
+                self.weight_loader(param, loaded_weight_shard, shard_id)
+            return
+
+        assert loaded_shard_id < len(self.output_sizes)
+        shard_offset = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
+        shard_size = self.output_sizes[loaded_shard_id] // self.tp_size
+
+        param_data = param_data.narrow(output_dim, shard_offset, shard_size)
+        start_idx = self.tp_rank * shard_size
+
+        loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
+
+        assert param_data.shape == loaded_weight.shape
+        param_data.copy_(loaded_weight)
