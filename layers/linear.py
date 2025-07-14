@@ -66,7 +66,7 @@ class ReplicatedLinear(nn.Module):
             self.register_parameter("bias", None)
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        assert param.shape == loaded_weight.shape
+        assert param.shape == loaded_weight.shape, f"{param.shape=} != {loaded_weight.shape=}"
         param.data.copy_(loaded_weight)
 
     def forward(self, x: torch.Tensor):
@@ -162,7 +162,7 @@ class ColumnParallelLinear(nn.Module):
         shard_size = param_data.shape[output_dim]
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
-        assert param_data.shape == loaded_weight.shape
+        assert param_data.shape == loaded_weight.shape, f"{param_data.shape=} != {loaded_weight.shape=}"
         param.data.copy_(loaded_weight)
             
     def forward(self, x: torch.Tensor):
@@ -214,7 +214,7 @@ class RowParallelLinear(nn.Module):
         input_size: int,
         output_size: int,
         bias: bool = True,
-        input_is_parallel: bool = False,
+        input_is_parallel: bool = True,
         skip_bias_add: bool = False,
         params_dtype: torch.dtype | None = None,
         reduce_results: bool = True,
@@ -237,8 +237,8 @@ class RowParallelLinear(nn.Module):
         self.input_size_per_partition = divide(input_size, tp_size)
         self.weight = nn.Parameter(
             torch.empty(
-                self.input_size_per_partition,
                 self.output_size,
+                self.input_size_per_partition,
                 dtype=params_dtype
             )
         )
@@ -261,7 +261,7 @@ class RowParallelLinear(nn.Module):
         shard_size = param_data.shape[input_dim]
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(input_dim, start_idx, shard_size)
-        assert param_data.shape == loaded_weight.shape
+        assert param_data.shape == loaded_weight.shape, f"{param_data.shape=} != {loaded_weight.shape=}"
         param.data.copy_(loaded_weight)
 
     def forward(self, x: torch.Tensor):
@@ -405,7 +405,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         start_idx = shard_id * shard_size
         loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
 
-        assert param_data.shape == loaded_weight.shape
+        assert param_data.shape == loaded_weight.shape, f"{param_data.shape=} != {loaded_weight.shape=}"
         param_data.copy_(loaded_weight)
 
 class MergedColumnParallelLinear(ColumnParallelLinear):
@@ -486,7 +486,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                 self.weight_loader(param, loaded_weight_shard, shard_id)
             return
 
-        assert loaded_shard_id < len(self.output_sizes)
+        assert loaded_shard_id < len(self.output_sizes), f"Invalid shard_id {loaded_shard_id}"
         shard_offset = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
         shard_size = self.output_sizes[loaded_shard_id] // self.tp_size
 
@@ -495,5 +495,5 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
 
         loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
 
-        assert param_data.shape == loaded_weight.shape
+        assert param_data.shape == loaded_weight.shape, f"{param_data.shape=} != {loaded_weight.shape=}"
         param_data.copy_(loaded_weight)
