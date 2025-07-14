@@ -2,10 +2,13 @@ import torch
 from torch.distributed import ProcessGroup
 import torch.distributed as dist
 import datetime
+from typing import Optional
 
 WORLD: ProcessGroup | None = None
 TP: ProcessGroup | None = None
 PP: ProcessGroup | None = None
+
+# Attention: 所有的 rank 都指的是 global rank，除非变量或参数命名为 rank_in_group, tp_rank, pp_rank
 
 def get_world_group() -> ProcessGroup:
     assert WORLD is not None, "Distributed process group is not initialized."
@@ -78,28 +81,49 @@ def destroy_distributed_environment():
         dist.destroy_process_group()
     WORLD = None
 
-def get_first_rank(group: ProcessGroup) -> int:
+def is_initialized() -> bool:
+    return dist.is_initialized()
+
+def get_first_rank(group: Optional[ProcessGroup] = None) -> int:
+    if group is None:
+        group = dist.group.WORLD
+    assert group is not None
     group_ranks = dist.get_process_group_ranks(group)
     return group_ranks[0]
 
-def get_last_rank(group: ProcessGroup) -> int:
+def get_last_rank(group: Optional[ProcessGroup] = None) -> int:
+    if group is None:
+        group = dist.group.WORLD
+    assert group is not None
     group_ranks = dist.get_process_group_ranks(group)
     return group_ranks[-1]
 
-def is_first_rank(group: ProcessGroup) -> bool:
-    rank = dist.get_rank(group)
+def is_first_rank(group: Optional[ProcessGroup] = None) -> bool:
+    if group is None:
+        group = dist.group.WORLD
+    assert group is not None
+    rank = dist.get_rank() # get global rank
     return rank == get_first_rank(group)
 
-def is_last_rank(group: ProcessGroup) -> bool:
-    rank = dist.get_rank(group)
+def is_last_rank(group: Optional[ProcessGroup] = None) -> bool:
+    if group is None:
+        group = dist.group.WORLD
+    assert group is not None
+    rank = dist.get_rank() # get global rank
     return rank == get_last_rank(group)
 
-def prev_rank(group: ProcessGroup) -> int:
+def prev_rank(group: Optional[ProcessGroup] = None) -> int:
+    if group is None:
+        group = dist.group.WORLD
+    assert group is not None
     rank = dist.get_rank(group)
     group_ranks = dist.get_process_group_ranks(group)
     return group_ranks[rank - 1]
 
-def next_rank(group: ProcessGroup) -> int:
+def next_rank(group: Optional[ProcessGroup] = None) -> int:
+    if group is None:
+        group = dist.group.WORLD
+    assert group is not None
     rank = dist.get_rank(group)
     group_ranks = dist.get_process_group_ranks(group)
     return group_ranks[rank + 1]

@@ -33,8 +33,8 @@ class RotaryEmbedding(nn.Module):
         head_size: int,
         rotary_dim: int,
         max_position_embeddings: int,
-        base: int,
-        dtype: torch.dtype,
+        base: float,
+        dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
         self.head_size = head_size
@@ -44,12 +44,13 @@ class RotaryEmbedding(nn.Module):
         self.dtype = dtype
 
         cache = self._compute_cos_sin_cache()
-        cache = cache.to(dtype)
+        if dtype is not None:
+            cache = cache.to(dtype)
 
         self.cos_sin_cache: torch.Tensor
         self.register_buffer("cos_sin_cache", cache, persistent=False)
 
-    def _compute_inv_freq(self, base: int | float) -> torch.Tensor:
+    def _compute_inv_freq(self, base: float) -> torch.Tensor:
         """Compute the inverse frequency."""
         # NOTE(woosuk): To exactly match the HF implementation, we need to
         # use CPU to compute the cache and then move it to GPU. However, we
@@ -70,7 +71,7 @@ class RotaryEmbedding(nn.Module):
         cache = torch.cat((cos, sin), dim=-1)
         return cache
 
-    def forward_native(
+    def forward(
         self,
         positions: torch.Tensor,
         query: torch.Tensor,

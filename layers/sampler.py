@@ -16,10 +16,6 @@ class Sampler(nn.Module):
     def __init__(self):
         super().__init__()
 
-
-        self._do_min_p = self.min_p is not None
-        self._do_top_p_top_k = self.top_p is not None or self.top_k is not None
-
     def forward(
         self,
         logits: torch.Tensor,

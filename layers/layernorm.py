@@ -2,6 +2,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from typing import Any, overload
+
 class RMSNorm(nn.Module):
     def __init__(
         self,
@@ -13,7 +15,7 @@ class RMSNorm(nn.Module):
         self.variance_epsilon = eps
 
 
-    def forward_native(
+    def forward(
         self,
         x: torch.Tensor,
         residual: torch.Tensor | None = None,

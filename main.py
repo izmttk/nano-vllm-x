@@ -4,6 +4,7 @@ import torch.distributed as dist
 import os
 import multiprocessing as mp
 import sys
+import traceback
 import psutil
 import signal
 from utils import kill_process_tree, kill_itself_when_parent_died
@@ -16,6 +17,7 @@ from distributed.parallel_state import (
     destroy_distributed_environment,
     destroy_model_parallel
 )
+from runner import run_model
 
 def run_worker(
     tp_rank: int,
@@ -44,10 +46,7 @@ def run_worker(
 
         # ======= TEST BEGINS =======
 
-        print(f"Rank {rank}: Allocated {torch.cuda.memory_allocated(rank)/1e9:.2f} GB, "
-            f"Reserved {torch.cuda.memory_reserved(rank)/1e9:.2f} GB")
         print(f"Worker {rank} started with TP rank {tp_rank}, PP rank {pp_rank}.")
-        print(get_tp_group().rank(), get_tp_group().size(), dist.get_rank(), dist.get_rank(get_tp_group()), dist.get_process_group_ranks(get_tp_group()))
 
         # ======= TEST torch gather_object =======
         local_state = {
@@ -82,11 +81,17 @@ def run_worker(
 
         # ======== TEST ENDS ========
 
+        # ======== RUN MODEL ========
+        dist.barrier()
+
+        run_model()
+
         destroy_model_parallel()
         destroy_distributed_environment()
 
     except Exception as e:
         print(f"Worker {rank} encountered an error: {e}")
+        traceback.print_exc()
         parent_process.send_signal(signal.SIGQUIT)
 
 
@@ -128,8 +133,8 @@ def lanuch_processes(
 
 if __name__ == "__main__":
     tp_size = 2
-    pp_size = 2
-    device_ids = [4, 5, 6, 7]
+    pp_size = 1
+    device_ids = [0, 1]
     try:
         lanuch_processes(
             tp_size=tp_size,

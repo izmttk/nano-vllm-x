@@ -12,7 +12,7 @@ class SiluAndMul(nn.Module):
         return: (num_tokens, d) or (batch_size, seq_len, d)
     """
 
-    def forward_native(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         d = x.shape[-1] // 2
         return F.silu(x[..., :d]) * x[..., d:]
     
@@ -30,6 +30,6 @@ class GeluAndMul(nn.Module):
         super().__init__()
         self.approximate = approximate
 
-    def forward_native(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         d = x.shape[-1] // 2
         return F.gelu(x[..., :d], approximate=self.approximate) * x[..., d:]
