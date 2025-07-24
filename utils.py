@@ -4,6 +4,7 @@ import signal
 import psutil
 import ctypes
 import threading  
+import functools
 
 def kill_itself_when_parent_died():
     if sys.platform == "linux":
@@ -12,7 +13,7 @@ def kill_itself_when_parent_died():
         libc = ctypes.CDLL("libc.so.6")
         libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
     else:
-        logger.warning("kill_itself_when_parent_died is only supported in linux.")
+        print("kill_itself_when_parent_died is only supported in linux.")
 
 def kill_process_tree(parent_pid = None, include_parent: bool = True, skip_pid: int | None = None):
     """Kill the process and all its child processes."""
@@ -51,3 +52,31 @@ def kill_process_tree(parent_pid = None, include_parent: bool = True, skip_pid: 
             itself.send_signal(signal.SIGQUIT)
         except psutil.NoSuchProcess:
             pass
+
+
+def bind_parent_process_lifecycle(func):
+    """函数装饰器实现当前进程和父进程生命周期绑定"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        # 当父进程死亡时，自动杀死当前进程
+        kill_itself_when_parent_died()
+        
+        # 获取父进程
+        parent_process = psutil.Process().parent()
+        assert parent_process is not None, "Parent process not found."
+        
+        def _handle_exit(signum, frame):
+            # 函数执行出错时，通知父进程并杀死自己
+            parent_process.send_signal(signal.SIGTERM)
+            sys.exit(128 + signum)
+
+        # 注册信号处理器
+        signal.signal(signal.SIGTERM, _handle_exit)
+        signal.signal(signal.SIGINT,  _handle_exit)
+        
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            _handle_exit(signal.SIGTERM, None)
+
+    return wrapper
