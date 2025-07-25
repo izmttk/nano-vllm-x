@@ -1,22 +1,30 @@
 from core.executor import Executor
 import time
 import multiprocessing as mp
+import asyncio
 
 from utils import bind_parent_process_lifecycle
 
 @bind_parent_process_lifecycle
-def executor_process(tp_size, pp_size, device_ids, nccl_port):
-    executor = Executor(
-        tp_size=tp_size,
-        pp_size=pp_size,
-        device_ids=device_ids,
-        nccl_port=nccl_port,
-    )
-    
-    print(f"Executor process started with TP size {tp_size}, PP size {pp_size}, and device IDs {device_ids}.")
-    
-    while True:
-        time.sleep(1)
+def executor_process(
+    tp_size: int,
+    pp_size: int,
+    device_ids: list[int],
+    nccl_port: int
+):
+    async def main_loop():
+        executor = Executor(
+            tp_size=tp_size,
+            pp_size=pp_size,
+            device_ids=device_ids,
+            nccl_port=nccl_port,
+        )
+        await executor.ready()
+        print(f"Executor process started with TP size {tp_size}, PP size {pp_size}, and device IDs {device_ids}.")
+        print(await executor.execute_model())
+
+    asyncio.run(main_loop())
+    print("All finished.")
 
 if __name__ == "__main__":
     tp_size = 2
@@ -25,14 +33,11 @@ if __name__ == "__main__":
     
     nccl_port = 44444
     
-    executor_process = mp.Process(
+    process = mp.Process(
         target=executor_process,
         args=(tp_size, pp_size, device_ids, nccl_port),
         name="executor_process"
     )
-    executor_process.start()
     print("Executor process started.")
-    
-    
-    while True:
-        time.sleep(1)
+    process.start()
+

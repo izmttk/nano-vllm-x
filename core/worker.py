@@ -65,7 +65,5 @@ class Worker:
 
     
     def execute_model(self):
-        # This method would contain the logic to execute the model
-        # using the ModelRunner instance.
-        pass
-    
+        print(f"Worker {self.rank} is executing the model.")
+        return f"WORKER {self.rank} RESULT"
