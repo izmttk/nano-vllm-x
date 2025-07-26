@@ -12,19 +12,15 @@ def executor_process(
     device_ids: list[int],
     nccl_port: int
 ):
-    async def main_loop():
-        executor = Executor(
-            tp_size=tp_size,
-            pp_size=pp_size,
-            device_ids=device_ids,
-            nccl_port=nccl_port,
-        )
-        await executor.startup()
-        print(f"Executor process started with TP size {tp_size}, PP size {pp_size}, and device IDs {device_ids}.")
-        print(await executor.execute_model())
-        await executor.shutdown()
-
-    asyncio.run(main_loop())
+    executor = Executor(
+        tp_size=tp_size,
+        pp_size=pp_size,
+        device_ids=device_ids,
+        nccl_port=nccl_port,
+    )
+    print(f"Executor process started with TP size {tp_size}, PP size {pp_size}, and device IDs {device_ids}.")
+    print(executor.execute_model())
+    executor.shutdown()
     print("All finished.")
 
 if __name__ == "__main__":

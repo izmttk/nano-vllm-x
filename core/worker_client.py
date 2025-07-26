@@ -3,102 +3,8 @@ import signal
 import sys
 from core.worker import Worker
 import multiprocessing as mp
-import time
 from utils import bind_parent_process_lifecycle
-
-import asyncio
-import zmq
-from zmq.asyncio import Context
-import msgpack
-
-class RpcServer:
-    def __init__(
-        self, 
-        request_endpoint: str,
-        response_endpoint: str,
-        is_responser: bool = True
-    ):
-        self.ctx = Context.instance()
-        self.receiver = self.ctx.socket(zmq.SUB)
-        self.receiver.setsockopt(zmq.SUBSCRIBE, b"") # 订阅所有消息
-        self.receiver.connect(request_endpoint)
-        self.methods = {}
-        
-        self.sender = self.ctx.socket(zmq.PUSH)
-        self.sender.connect(response_endpoint)
-        
-        self.is_responser = is_responser
-        
-    def register_method(self, name, coro_func):
-        """注册可以被远程调用的方法"""
-        self.methods[name] = coro_func
-    
-    async def handle_request(self, request_data):
-        """处理单个请求"""
-        try:
-            request = msgpack.unpackb(request_data, raw=False)
-            method_name = request['method']
-            args = request.get('args', [])
-            kwargs = request.get('kwargs', {})
-            # 查找并调用注册的方法
-            if method_name in self.methods:
-                method = self.methods[method_name]
-                # 执行方法（支持async和sync函数）
-                if asyncio.iscoroutinefunction(method):
-                    result = await method(*args, **kwargs)
-                else:
-                    result = method(*args, **kwargs)
-                
-                # 返回成功结果
-                return msgpack.packb({
-                    'status': 'success',
-                    'result': result
-                })
-            else:
-                # 方法不存在
-                return msgpack.packb({
-                    'status': 'error',
-                    'error': f"Method '{method_name}' not found"
-                })
-        except Exception as e:
-            # 处理异常
-            return msgpack.packb({
-                'status': 'error',
-                'error': str(e)
-            })
-
-    async def send_ready(self):
-        """发送服务就绪信号"""
-        await self.sender.send(b"READY")
-
-    async def start(self):
-        """主循环，接收请求并处理"""
-        while True:
-            request_id, request_data = await self.receiver.recv_multipart()
-            await self.process_single_request(request_id, request_data)
-
-    def close(self):
-        """清理资源"""
-        self.receiver.close()
-        self.sender.close()
-        self.ctx.term()
-
-    async def process_single_request(self, request_id, request_data):
-        """处理单个请求并发送响应"""
-        try:
-            response = await self.handle_request(request_data)
-            if self.is_responser:
-                await self.sender.send_multipart([request_id, response])
-        except Exception as e:
-            if self.is_responser:
-                error_msg = msgpack.dumps({
-                    'status': 'error',
-                    'error': f"Server error: {str(e)}"
-                })
-                await self.sender.send_multipart([request_id, error_msg])
-
-
-
+import queue
 class WorkerClient:
     def __init__(
         self,
@@ -106,7 +12,7 @@ class WorkerClient:
         tp_size: int,
         pp_rank: int,
         pp_size: int,
-        nccl_port: int = 29500
+        nccl_port: int = 29500,
     ):
         self.tp_rank = tp_rank
         self.tp_size = tp_size
@@ -116,18 +22,25 @@ class WorkerClient:
         self.world_size = pp_size * tp_size
 
         self.nccl_port = nccl_port
-        self.init_worker()
         
+        self.methods = {}  # 用于存储注册的方法
+        
+        self.input_queue = mp.Queue()
+        self.output_queue = mp.Queue()
+        self.init_worker()
+
     def init_worker(self):
         self.worker_process = mp.Process(
             target=self.worker_main_loop,
             name=f"worker-{self.rank}",
         )
         self.worker_process.start()
+    
+    def send_request(self, request_id: str, data: dict):
+        self.input_queue.put((request_id, data))
 
-    def shutdown(self):
-        if self.worker_process.is_alive():
-            self.worker_process.terminate()
+    def recv_response(self, timeout: Optional[float] = None):
+        return self.output_queue.get(timeout=timeout)
 
     @bind_parent_process_lifecycle
     def worker_main_loop(self):
@@ -140,22 +53,46 @@ class WorkerClient:
         )
         worker.init_environment()
         worker.load_model()
-
-        rpc_server = RpcServer(
-            request_endpoint=f"ipc://executor_request.ipc",
-            response_endpoint=f"ipc://executor_response.ipc",
-            is_responser=(self.tp_rank == 0 and self.pp_rank == self.pp_size - 1)
-        )
-        rpc_server.register_method("execute_model", worker.execute_model)
         
-        def handle_signal(signum, frame):
-            print(f"Worker {self.rank} received signal {signum}, cleaning up...")
-            worker.destroy_environment()
-            print(f"Worker {self.rank} has cleaned up and is exiting.")
-            sys.exit(0)
-
-        signal.signal(signal.SIGTERM, handle_signal)
+        self.methods["execute_model"] = worker.execute_model
         
-        asyncio.run(rpc_server.send_ready())
-        print(f"Worker {self.rank} is ready.")
-        asyncio.run(rpc_server.start())
+        while True:
+            request_id, data = self.input_queue.get()  # 等待输入
+            method_name = data.get('method')
+            if method_name == "shutdown":
+                self.output_queue.put((request_id, "shutdown"))
+                break
+            response = self.handle_request(data)  # 处理请求
+            self.output_queue.put((request_id, response))
+        worker.destroy_environment()
+        print(f"Worker {self.rank} has shut down.")
+
+    def handle_request(self, request):
+        """处理单个请求"""
+        try:
+            method_name = request['method']
+            args = request.get('args', [])
+            kwargs = request.get('kwargs', {})
+            # 查找并调用注册的方法
+            if method_name in self.methods:
+                method = self.methods[method_name]
+                # 执行方法
+                result = method(*args, **kwargs)
+                
+                # 返回成功结果
+                return {
+                    'status': 'success',
+                    'result': result
+                }
+            else:
+                # 方法不存在
+                return {
+                    'status': 'error',
+                    'error': f"Method '{method_name}' not found"
+                }
+        except Exception as e:
+            # 处理异常
+            return {
+                'status': 'error',
+                'error': str(e)
+            }

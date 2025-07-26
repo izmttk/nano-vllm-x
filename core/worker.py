@@ -1,4 +1,5 @@
 import torch
+import time
 from distributed.parallel_state import (
     get_world_group,
     get_tp_group,
@@ -66,4 +67,5 @@ class Worker:
     
     def execute_model(self):
         print(f"Worker {self.rank} is executing the model.")
+        time.sleep(3)  # Simulate some processing time
         return f"WORKER {self.rank} RESULT"
