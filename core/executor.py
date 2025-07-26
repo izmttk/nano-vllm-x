@@ -24,27 +24,32 @@ class RpcClient:
         
         self.num_workers = num_workers
 
-    async def ready(self):
+    async def recv_ready(self):
         for i in range(self.num_workers):
             await self.receiver.recv()
 
-    async def start(self):
-        # 启动接收器任务
-        await self._receiver()
+    def close(self):
+        """清理资源"""
+        self.sender.close()
+        self.receiver.close()
+        self.ctx.term()
 
-    async def _receiver(self):
-        """接收并处理来自Worker的响应"""
+    async def start(self):
+        """主循环，接收响应并处理"""
         while True:
-            message = await self.receiver.recv_multipart()
-            request_id, resp_data = message
-            request_id = request_id.decode()
-            response = msgpack.unpackb(resp_data, raw=False)
-            future = self.pending.pop(request_id, None)
-            if future:
-                if response['status'] == 'success':
-                    future.set_result(response['result'])
-                else:
-                    future.set_exception(Exception(response['error']))
+            request_id, resp_data = await self.receiver.recv_multipart()
+            await self.process_single_response(request_id, resp_data)
+            
+    async def process_single_response(self, request_id, resp_data):
+        """处理单个响应"""
+        request_id = request_id.decode()
+        response = msgpack.unpackb(resp_data, raw=False)
+        future = self.pending.pop(request_id, None)
+        if future:
+            if response['status'] == 'success':
+                future.set_result(response['result'])
+            else:
+                future.set_exception(Exception(response['error']))
 
     async def execute(self, method, *args, **kwargs):
         """发起RPC调用，返回调用结果"""
@@ -103,9 +108,15 @@ class Executor:
                 )
                 self.workers.append(worker)
 
-    async def ready(self):
-        await self.rpc_client.ready()
-        asyncio.create_task(self.rpc_client.start())
+    async def startup(self):
+        await self.rpc_client.recv_ready()
+        self.recv_loop = asyncio.create_task(self.rpc_client.start())
+        
+    async def shutdown(self):
+        """清理资源"""
+        self.recv_loop.cancel()
+        for worker in self.workers:
+            worker.shutdown()
 
     async def execute_model(self):
         print("Executor is executing the model...")

@@ -19,9 +19,10 @@ def executor_process(
             device_ids=device_ids,
             nccl_port=nccl_port,
         )
-        await executor.ready()
+        await executor.startup()
         print(f"Executor process started with TP size {tp_size}, PP size {pp_size}, and device IDs {device_ids}.")
         print(await executor.execute_model())
+        await executor.shutdown()
 
     asyncio.run(main_loop())
     print("All finished.")

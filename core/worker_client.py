@@ -1,5 +1,6 @@
 from typing import Optional
-
+import signal
+import sys
 from core.worker import Worker
 import multiprocessing as mp
 import time
@@ -66,19 +67,22 @@ class RpcServer:
                 'error': str(e)
             })
 
-    async def ready(self):
+    async def send_ready(self):
         """发送服务就绪信号"""
         await self.sender.send(b"READY")
 
     async def start(self):
-        """启动RPC服务"""
+        """主循环，接收请求并处理"""
         while True:
             request_id, request_data = await self.receiver.recv_multipart()
-            # 并行处理请求
-            asyncio.create_task(
-                self.process_single_request(request_id, request_data)
-            )
-    
+            await self.process_single_request(request_id, request_data)
+
+    def close(self):
+        """清理资源"""
+        self.receiver.close()
+        self.sender.close()
+        self.ctx.term()
+
     async def process_single_request(self, request_id, request_data):
         """处理单个请求并发送响应"""
         try:
@@ -121,6 +125,10 @@ class WorkerClient:
         )
         self.worker_process.start()
 
+    def shutdown(self):
+        if self.worker_process.is_alive():
+            self.worker_process.terminate()
+
     @bind_parent_process_lifecycle
     def worker_main_loop(self):
         worker = Worker(
@@ -140,6 +148,14 @@ class WorkerClient:
         )
         rpc_server.register_method("execute_model", worker.execute_model)
         
-        asyncio.run(rpc_server.ready())
+        def handle_signal(signum, frame):
+            print(f"Worker {self.rank} received signal {signum}, cleaning up...")
+            worker.destroy_environment()
+            print(f"Worker {self.rank} has cleaned up and is exiting.")
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, handle_signal)
+        
+        asyncio.run(rpc_server.send_ready())
         print(f"Worker {self.rank} is ready.")
         asyncio.run(rpc_server.start())
