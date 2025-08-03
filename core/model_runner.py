@@ -42,3 +42,19 @@ class ModelRunner:
         self.sampler = Sampler()
         
         load_model(self.model, self.model_path)
+
+    def execute_model(self, input_ids: torch.Tensor):
+        input_device = input_ids.device
+        # input_ids: (seq_len)
+        input_ids = input_ids.to(self.device)
+        assert hasattr(self, 'model') and hasattr(self, 'sampler'), \
+            "Model and sampler must be loaded before execution."
+        print(f"Rank {self.rank} executing model {self.model_path}.")
+
+        positions = torch.arange(input_ids.shape[-1], dtype=torch.long, device=self.device)
+
+        hidden_states = self.model(input_ids, positions)
+        logits = self.model.compute_logits(hidden_states)
+
+        output_ids = self.sampler(logits[..., -1, :])
+        return output_ids.to(input_device)

@@ -3,11 +3,12 @@ from core.worker_client import WorkerClient
 
 import threading
 from concurrent.futures import Future
-import queue
+import torch
 
 class Executor:
     def __init__(
         self,
+        model: str,
         tp_size: int,
         pp_size: int,
         nccl_port: int = 29500,
@@ -28,6 +29,7 @@ class Executor:
         for pp_rank in range(pp_size):
             for tp_rank in range(tp_size):
                 worker = WorkerClient(
+                    model=model,
                     tp_rank=tp_rank,
                     tp_size=tp_size,
                     pp_rank=pp_rank,
@@ -85,7 +87,6 @@ class Executor:
             worker.send_request(request_id, request)
         return future.result()
 
-    def execute_model(self):
+    def execute_model(self, input_ids: torch.Tensor):
         print("Executor is executing the model...")
-        return self.execute("execute_model")
-    
+        return self.execute("execute_model", input_ids=input_ids)

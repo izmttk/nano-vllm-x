@@ -5,6 +5,7 @@ import psutil
 import ctypes
 import threading  
 import functools
+import traceback
 
 def kill_itself_when_parent_died():
     if sys.platform == "linux":
@@ -77,6 +78,7 @@ def bind_parent_process_lifecycle(func):
         try:
             return func(*args, **kwargs)
         except Exception as e:
+            traceback.print_exc()
             _handle_exit(signal.SIGTERM, None)
 
     return wrapper

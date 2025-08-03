@@ -1,19 +1,19 @@
 from typing import Optional
-import signal
-import sys
 from core.worker import Worker
-import multiprocessing as mp
+import torch.multiprocessing as mp
 from utils import bind_parent_process_lifecycle
-import queue
+
 class WorkerClient:
     def __init__(
         self,
+        model: str,
         tp_rank: int,
         tp_size: int,
         pp_rank: int,
         pp_size: int,
         nccl_port: int = 29500,
     ):
+        self.model = model
         self.tp_rank = tp_rank
         self.tp_size = tp_size
         self.pp_rank = pp_rank
@@ -25,17 +25,19 @@ class WorkerClient:
         
         self.methods = {}  # 用于存储注册的方法
         
-        self.input_queue = mp.Queue()
-        self.output_queue = mp.Queue()
+        
+        self.mp_ctx = mp.get_context('spawn')
+        self.input_queue = self.mp_ctx.Queue()
+        self.output_queue = self.mp_ctx.Queue()
         self.init_worker()
 
     def init_worker(self):
-        self.worker_process = mp.Process(
+        self.worker_process = self.mp_ctx.Process(
             target=self.worker_main_loop,
             name=f"worker-{self.rank}",
         )
         self.worker_process.start()
-    
+
     def send_request(self, request_id: str, data: dict):
         self.input_queue.put((request_id, data))
 
@@ -45,6 +47,7 @@ class WorkerClient:
     @bind_parent_process_lifecycle
     def worker_main_loop(self):
         worker = Worker(
+            model=self.model,
             tp_rank=self.tp_rank,
             tp_size=self.tp_size,
             pp_rank=self.pp_rank,

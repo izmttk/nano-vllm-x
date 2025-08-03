@@ -1,7 +1,6 @@
 from core.executor import Executor
-import time
+from transformers import AutoConfig, AutoTokenizer
 import multiprocessing as mp
-import asyncio
 
 from utils import bind_parent_process_lifecycle
 
@@ -12,14 +11,25 @@ def executor_process(
     device_ids: list[int],
     nccl_port: int
 ):
+    
+    prompt = "明月几时有，把酒问青天。不知"
+    model="/opt/models/Qwen3-8B"
+    tokenizer = AutoTokenizer.from_pretrained(model)
+    input_ids = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
+
     executor = Executor(
+        model=model,
         tp_size=tp_size,
         pp_size=pp_size,
         device_ids=device_ids,
         nccl_port=nccl_port,
     )
     print(f"Executor process started with TP size {tp_size}, PP size {pp_size}, and device IDs {device_ids}.")
-    print(executor.execute_model())
+    
+    output_ids = executor.execute_model(input_ids)
+    print(output_ids)
+    print(tokenizer.decode(output_ids))
+    
     executor.shutdown()
     print("All finished.")
 
