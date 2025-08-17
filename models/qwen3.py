@@ -1,5 +1,5 @@
-from collections.abc import Iterable
-from typing import Optional, Union, Callable
+from collections.abc import Iterable, Callable
+from typing import Optional, Union
 
 import torch
 from torch import nn
@@ -50,6 +50,7 @@ class Qwen3Attention(nn.Module):
                  hidden_size: int,
                  num_heads: int,
                  num_kv_heads: int,
+                 layer_id: int,
                  max_position: int = 4096 * 32,
                  head_dim: Optional[int] = None,
                  rms_norm_eps: float = 1e-06,
@@ -100,7 +101,8 @@ class Qwen3Attention(nn.Module):
         self.attn = Attention(self.num_heads,
                               self.head_dim,
                               self.scaling,
-                              num_kv_heads=self.num_kv_heads)
+                              num_kv_heads=self.num_kv_heads,
+                              layer_id=layer_id)
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
 
@@ -130,6 +132,7 @@ class Qwen3DecoderLayer(nn.Module):
     def __init__(
         self,
         config: Qwen3Config,
+        layer_id: int
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -144,6 +147,7 @@ class Qwen3DecoderLayer(nn.Module):
             rms_norm_eps=config.rms_norm_eps,
             qkv_bias=getattr(config, 'attention_bias', False),
             head_dim=getattr(config, 'head_dim', None),
+            layer_id=layer_id
         )
         self.mlp = Qwen3MLP(
             hidden_size=self.hidden_size,
@@ -180,7 +184,7 @@ IntermediateTensors = dict[str, Optional[torch.Tensor]]
 
 def make_layers(
     num_hidden_layers: int,
-    layer_fn: Callable[[], nn.Module],
+    layer_fn: Callable[[int], nn.Module],
 ) -> tuple[int, int, torch.nn.ModuleList]:
     """Make a list of layers with the given layer function, taking
     pipeline parallelism into account.
@@ -190,7 +194,7 @@ def make_layers(
                                             get_pp_group().size())
     modules = torch.nn.ModuleList(
         [PPMissingLayer() for _ in range(start_layer)] + [
-            layer_fn()
+            layer_fn(idx)
             for idx in range(start_layer, end_layer)
         ] + [PPMissingLayer() for _ in range(end_layer, num_hidden_layers)])
     return start_layer, end_layer, modules
@@ -217,7 +221,7 @@ class Qwen3Model(nn.Module):
         # Use the provided decoder layer type or default to Qwen2DecoderLayer
         self.start_layer, self.end_layer, self.layers = make_layers(
             config.num_hidden_layers,
-            lambda: Qwen3DecoderLayer(config=config)
+            lambda layer_id: Qwen3DecoderLayer(config=config, layer_id=layer_id)
         )
 
         if is_last_rank(get_pp_group()):

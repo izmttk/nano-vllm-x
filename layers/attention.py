@@ -1,8 +1,131 @@
+from contextlib import contextmanager
+from typing import Optional
+from dataclasses import dataclass
+import enum
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# TODO: add kv cache
+from core.kv_cache import KVCachePool
+from core.common import ForwardMode
+
+from flashinfer import (
+    BatchDecodeWithPagedKVCacheWrapper,
+    BatchPrefillWithPagedKVCacheWrapper,
+)
+
+@dataclass
+class AttentionMetadata:
+    forward_mode: ForwardMode
+
+    kv_cache: KVCachePool
+    kv_indices: torch.Tensor
+    output_kv_indices: torch.Tensor
+
+    workspace_buffer: torch.Tensor
+    paged_kv_indptr: torch.Tensor
+    paged_kv_indices: torch.Tensor
+    paged_kv_last_page_len: torch.Tensor
+    qo_indptr: torch.Tensor
+    prefill_wrapper: BatchPrefillWithPagedKVCacheWrapper
+    decode_wrapper: BatchDecodeWithPagedKVCacheWrapper
+    
+
+    @staticmethod
+    def build(
+        forward_mode: ForwardMode,
+        num_qo_heads: int,
+        num_kv_heads: int,
+        head_dim: int,
+        page_size: int,
+        kv_cache: KVCachePool,
+        kv_indices: torch.Tensor,
+        output_kv_indices: torch.Tensor,
+        seq_lens: torch.Tensor,
+        kv_seq_lens: torch.Tensor,
+        device: torch.device
+    ):
+        flashinfer_workspace_size = 512 * 1024 * 1024
+
+        # Allocate buffers
+        workspace_buffer = torch.empty(
+            flashinfer_workspace_size,
+            dtype=torch.uint8,
+            device=device,
+        )
+        qo_indptr = torch.cat([
+            torch.zeros(1, dtype=torch.long, device=device),
+            torch.cumsum(seq_lens, dim=0)
+        ])
+        paged_kv_indptr = torch.cat([
+            torch.zeros(1, dtype=torch.long, device=device),
+            torch.cumsum(kv_seq_lens // page_size * page_size, dim=0)
+        ])
+        paged_kv_indices = kv_indices[::page_size]
+        paged_kv_last_page_len = kv_seq_lens % page_size
+        paged_kv_last_page_len = torch.where(paged_kv_last_page_len == 0,
+                                             page_size, paged_kv_last_page_len)
+
+        prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
+            workspace_buffer,
+            "NHD",
+            backend="auto",
+        )
+        prefill_wrapper.plan(
+            qo_indptr=qo_indptr,
+            paged_kv_indices=paged_kv_indices,
+            paged_kv_indptr=paged_kv_indptr,
+            paged_kv_last_page_len=paged_kv_last_page_len,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim_qk=head_dim,
+            head_dim_vo=head_dim,
+            page_size=page_size,
+            causal=True,
+        )
+        
+        decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
+            workspace_buffer,
+            "NHD",
+            use_tensor_cores=False,
+        )
+        decode_wrapper.plan(
+            indptr=paged_kv_indptr,
+            indices=paged_kv_indices,
+            last_page_len=paged_kv_last_page_len,
+            num_qo_heads=num_qo_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_size=page_size,
+        )
+        metadata = AttentionMetadata(
+            forward_mode=forward_mode,
+            kv_cache=kv_cache,
+            kv_indices=kv_indices,
+            output_kv_indices=output_kv_indices,
+            workspace_buffer=workspace_buffer,
+            paged_kv_indptr=paged_kv_indptr,
+            paged_kv_indices=paged_kv_indices,
+            paged_kv_last_page_len=paged_kv_last_page_len,
+            qo_indptr=qo_indptr,
+            prefill_wrapper=prefill_wrapper,
+            decode_wrapper=decode_wrapper,
+        )
+        return metadata
+
+
+@contextmanager
+def attention_kv_cache(model: nn.Module, metadata: AttentionMetadata):
+    attn_modules: list[Attention] = []
+    for module in model.modules():
+        if isinstance(module, Attention):
+            attn_modules.append(module)
+            module.set_attention_metadata(metadata)
+    yield
+    for module in attn_modules:
+        module.set_attention_metadata(None)
+
+# flashinfer implemented attention
 class Attention(nn.Module):
     def __init__(
         self,
@@ -10,6 +133,7 @@ class Attention(nn.Module):
         head_dim: int,
         scaling: float,
         num_kv_heads: int,
+        layer_id: int
     ):
         super().__init__()
         self.num_heads = num_heads
@@ -18,88 +142,46 @@ class Attention(nn.Module):
         self.num_kv_groups = num_heads // num_kv_heads
 
         self.scaling = self.head_dim**-0.5 if scaling is None else scaling
+        self.layer_id = layer_id
+
+        self.attention_metadata: AttentionMetadata | None = None
+
+    def set_attention_metadata(self, metadata: AttentionMetadata | None):
+        self.attention_metadata = metadata
 
     def forward(
         self,
-        query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        **kwargs,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        save_kv_cache=True
     ):
-        query = query.view(query.shape[:-1] + (self.num_heads, self.head_dim))
-        key = key.view(key.shape[:-1] + (self.num_kv_heads, self.head_dim))
-        value = value.view(value.shape[:-1] + (self.num_kv_heads, self.head_dim))
+        assert self.attention_metadata is not None
 
-        query = query.transpose(-3, -2)
-        key = key.transpose(-3, -2)
-        value = value.transpose(-3, -2)
+        cache_loc = self.attention_metadata.output_kv_indices
+        q = q.contiguous()
 
-        attn_output = eager_attention_forward(
-            self,
-            query,
-            key,
-            value,
-            scaling=self.scaling,
-            **kwargs,
-        )
+        if k is not None:
+            assert v is not None
+            if save_kv_cache:
+                self.attention_metadata.kv_cache.set_kv_cache(
+                    self.layer_id, cache_loc, k, v
+                )
 
-        attn_output = attn_output.transpose(-3, -2)
-        attn_output = attn_output.reshape(attn_output.shape[:-2] + (self.num_heads * self.head_dim,))
-        return attn_output
-    
-
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """
-    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
-    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
-    """
-    head_dim = hidden_states.shape[-1]
-    slen = hidden_states.shape[-2]
-    num_key_value_heads = hidden_states.shape[-3]
-    other_dims = hidden_states.shape[:-3]
-
-    if n_rep == 1:
-        return hidden_states
-    
-    hidden_states = hidden_states.unsqueeze(-3)
-    hidden_states = hidden_states.expand(*other_dims, num_key_value_heads, n_rep, slen, head_dim)
-    return hidden_states.reshape(*other_dims, num_key_value_heads * n_rep, slen, head_dim)
-
-
-def eager_attention_forward(
-    module: Attention,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    scaling: float,
-    is_causal: bool = True,
-    attn_mask: torch.Tensor | None = None,
-    **kwargs,
-):
-    key_states = repeat_kv(key, module.num_kv_groups)
-    value_states = repeat_kv(value, module.num_kv_groups)
-
-    seq_len = query.size(-2)
-    head_dim = query.size(-1)
-    seq_len_kv = key_states.size(-2)
-
-    attn_bias = torch.zeros(seq_len, seq_len_kv, dtype=query.dtype, device=query.device)
-
-    if is_causal:
-        assert attn_mask is None
-        temp_mask = torch.ones(seq_len, seq_len_kv, dtype=torch.bool).tril(diagonal=0).to(query.device)
-        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
-        attn_bias.to(query.dtype)
-
-    if attn_mask is not None:
-        if attn_mask.dtype == torch.bool:
-            attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
+        # Call the wrapped function
+        if self.attention_metadata.forward_mode == ForwardMode.PREFILL:
+            o = self.attention_metadata.prefill_wrapper.forward(
+                q.view(-1, self.num_heads, self.head_dim),
+                self.attention_metadata.kv_cache.get_kv_cache(self.layer_id),
+                causal=True
+            )
+        elif self.attention_metadata.forward_mode == ForwardMode.DECODE:
+            o = self.attention_metadata.decode_wrapper.forward(
+                q.view(-1, self.num_heads, self.head_dim),
+                self.attention_metadata.kv_cache.get_kv_cache(self.layer_id)
+            )
         else:
-            attn_bias = attn_mask + attn_bias
+            raise NotImplementedError
 
-    attn_weights = torch.matmul(query, key_states.transpose(-2, -1)) * scaling
-    attn_weights += attn_bias
-    attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_output = torch.matmul(attn_weights, value_states)
 
-    return attn_output
+        return o.view(-1, self.num_heads * self.head_dim)
