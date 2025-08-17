@@ -74,34 +74,41 @@ class ModelRunner:
 
     def prepare_input(self, batch: ForwardBatch):
         input_ids: list[int] = []
-        kv_indices: list[int] = []
-        output_kv_indices: list[int] = []
-        seq_lens: list[int] = []
-        kv_seq_lens: list[int] = []
         positions: list[int] = []
 
         for seq in batch.seqs:
             input_ids.extend(seq.token_ids[seq.cached_kv_len:])
-            kv_indices.extend(seq.kv_indices[:seq.cached_kv_len])
-            output_kv_indices.extend(seq.kv_indices[seq.cached_kv_len:])
-            seq_lens.append(len(seq.token_ids) - seq.cached_kv_len)
-            kv_seq_lens.append(seq.cached_kv_len)
             positions.extend(range(seq.cached_kv_len, len(seq.token_ids)))
 
         tensor_input_ids = torch.tensor(input_ids, dtype=torch.long, device=self.device)
-        tensor_kv_indices = torch.tensor(kv_indices, dtype=torch.long, device=self.device)
-        tensor_output_kv_indices = torch.tensor(output_kv_indices, dtype=torch.long, device=self.device)
-        tensor_seq_lens = torch.tensor(seq_lens, dtype=torch.long, device=self.device)
-        tensor_kv_seq_lens = torch.tensor(kv_seq_lens, dtype=torch.long, device=self.device)
         tensor_positions = torch.tensor(positions, dtype=torch.long, device=self.device)
 
         return (
             tensor_input_ids,
             tensor_positions,
-            tensor_kv_indices,
-            tensor_output_kv_indices,
-            tensor_seq_lens,
-            tensor_kv_seq_lens
+        )
+    
+    def prepare_sampling_params(self, batch: ForwardBatch):
+        temperatures = []
+        min_ps = []
+        top_ps = []
+        top_ks = []
+        for seq in batch.seqs:
+            temperatures.append(seq.sampling_params.temperature)
+            min_ps.append(seq.sampling_params.min_p)
+            top_ps.append(seq.sampling_params.top_p)
+            top_ks.append(seq.sampling_params.top_k)
+        
+        tensor_temperatures = torch.tensor(temperatures, dtype=torch.float, device=self.device)
+        tensor_min_ps = torch.tensor(min_ps, dtype=torch.float, device=self.device)
+        tensor_top_ps = torch.tensor(top_ps, dtype=torch.float, device=self.device)
+        tensor_top_ks = torch.tensor(top_ks, dtype=torch.long, device=self.device)
+
+        return (
+            tensor_temperatures,
+            tensor_min_ps,
+            tensor_top_ps,
+            tensor_top_ks
         )
     
     def prepare_last_hiden_states(self, batch: ForwardBatch, hidden_states: torch.Tensor):
@@ -118,27 +125,13 @@ class ModelRunner:
             "Model and sampler must be loaded before execution."
         print(f"Rank {self.rank} executing model {self.model_path}.")
 
-        (
-            input_ids,
-            positions,
-            kv_indices,
-            output_kv_indices,
-            seq_lens,
-            kv_seq_lens,
-        ) = self.prepare_input(batch)
+        input_ids, positions = self.prepare_input(batch)
         
         attention_metadata = AttentionMetadata.build(
             forward_mode=batch.foward_mode,
-            max_bs=batch.max_bs,
-            num_heads=self.num_heads,
-            num_kv_heads=self.num_kv_heads,
-            head_dim=self.head_dim,
             page_size=self.kv_cache_page_size,
             kv_cache=self.kv_cache,
-            kv_indices=kv_indices,
-            output_kv_indices=output_kv_indices,
-            seq_lens=seq_lens,
-            kv_seq_lens=kv_seq_lens,
+            batch=batch,
             device=self.device,
         )
 
@@ -146,8 +139,14 @@ class ModelRunner:
             hidden_states = self.model(input_ids, positions)
 
         hidden_states = self.prepare_last_hiden_states(batch, hidden_states)
-
         logits = self.model.compute_logits(hidden_states)
-        tensor_output_ids = self.sampler(logits)
+        
+        (
+            temperatures,
+            min_ps,
+            top_ps,
+            top_ks
+        ) = self.prepare_sampling_params(batch)
+        tensor_output_ids = self.sampler(logits, temperatures, min_ps, top_ps, top_ks)
 
         return tensor_output_ids.tolist()
