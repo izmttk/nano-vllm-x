@@ -16,14 +16,12 @@ class ModelRunner:
 
         # KV cache parameters
         kv_cache_num_tokens: int,
-        kv_cache_page_size: int = 1,
     ):
         self.model_path = model
         self.rank = rank
         self.device = device
 
         self.kv_cache_num_tokens = kv_cache_num_tokens
-        self.kv_cache_page_size = kv_cache_page_size
     
     def load_model(self):
         
@@ -69,7 +67,6 @@ class ModelRunner:
             head_dim=self.head_dim,
             start_layer=self.start_layer,
             end_layer=self.end_layer,
-            page_size=self.kv_cache_page_size,
         )
 
     def prepare_input(self, batch: ForwardBatch):
@@ -129,7 +126,6 @@ class ModelRunner:
         
         attention_metadata = AttentionMetadata.build(
             forward_mode=batch.foward_mode,
-            page_size=self.kv_cache_page_size,
             kv_cache=self.kv_cache,
             batch=batch,
             device=self.device,

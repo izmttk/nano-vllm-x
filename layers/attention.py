@@ -33,11 +33,11 @@ class AttentionMetadata:
     @staticmethod
     def build(
         forward_mode: ForwardMode,
-        page_size: int,
         kv_cache: KVCachePool,
         batch: ForwardBatch,
         device: torch.device
     ):
+        page_size = 1
         seqlens_q = torch.tensor(
             [len(seq.token_ids) - seq.cached_kv_len for seq in batch.seqs],
             dtype=torch.long,

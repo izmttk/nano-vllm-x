@@ -37,7 +37,6 @@ class AttentionMetadata:
         num_heads: int,
         num_kv_heads: int,
         head_dim: int,
-        page_size: int,
         kv_cache: KVCachePool,
         kv_indices: torch.Tensor,
         output_kv_indices: torch.Tensor,
@@ -45,6 +44,7 @@ class AttentionMetadata:
         kv_seq_lens: torch.Tensor,
         device: torch.device
     ):
+        page_size = 1
         flashinfer_workspace_size = 512 * 1024 * 1024
 
         # Allocate buffers

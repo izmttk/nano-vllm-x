@@ -1,7 +1,6 @@
 from typing import Optional
 from collections import abc
 import torch
-import math
 import heapq
 import time
 
@@ -19,7 +18,6 @@ class KVCachePool:
         head_dim: int,
         start_layer: Optional[int] = None,
         end_layer: Optional[int] = None,
-        page_size: int = 1,
     ):
         self.dtype = dtype
         self.device = device
@@ -29,22 +27,16 @@ class KVCachePool:
         self.head_dim = head_dim
         self.start_layer = start_layer or 0
         self.end_layer = end_layer or num_layers - 1
-
-        self.page_size = page_size
-        self.num_pages = math.ceil(self.num_tokens / self.page_size)
-
         self.create_cache_pool()
 
     def create_cache_pool(self):
         self.k_cache = torch.zeros(
-            (self.num_layers, self.num_pages *
-             self.page_size, self.num_heads, self.head_dim),
+            (self.num_layers, self.num_tokens, self.num_heads, self.head_dim),
             dtype=self.dtype,
             device=self.device,
         )
         self.v_cache = torch.zeros(
-            (self.num_layers, self.num_pages *
-             self.page_size, self.num_heads, self.head_dim),
+            (self.num_layers, self.num_tokens, self.num_heads, self.head_dim),
             dtype=self.dtype,
             device=self.device,
         )
@@ -67,35 +59,30 @@ class KVCacheAllocator:
     def __init__(
         self,
         size: int,
-        page_size: int
     ):
-        assert size % page_size == 0
-
         self.size = size
-        self.page_size = page_size
 
-        self.free_pages = list(range(0, size, page_size))
+        self.free_slots = list(range(size))
 
     def alloc(self, need_size: int):
-        if need_size > len(self.free_pages):
+        if need_size > len(self.free_slots):
             return None
 
-        select_index = self.free_pages[:need_size]
-        self.free_pages = self.free_pages[need_size:]
+        select_index = self.free_slots[:need_size]
+        self.free_slots = self.free_slots[need_size:]
         return select_index
 
     def free(self, free_index: abc.Iterable[int]):
-        self.free_pages.extend(free_index)
-        self.free_pages.sort()
+        self.free_slots.extend(free_index)
+        self.free_slots.sort()
 
 
 class RadixTreeNode:
     def __init__(
         self,
-        # child dict 的 key 等于每个子节点 key 的开头 page size 长度的子序列
-        children: dict[tuple[int, ...], "RadixTreeNode"] = {},
+        # child dict 的 key 等于每个子节点 key 的开头 token
+        children: dict[int, "RadixTreeNode"] = {},
         parent: Optional["RadixTreeNode"] = None,
-        # key 和 value 长度应该为 page size 的整数倍
         key: tuple[int, ...] = tuple(),
         value: tuple[int, ...] = tuple(),
         ref_count: int = 0
@@ -105,8 +92,6 @@ class RadixTreeNode:
         self.key = key
         self.value = value
 
-        self.hashs: tuple[int] = tuple()
-
         self.access_time = time.monotonic()
         self.ref_count = ref_count
 
@@ -114,33 +99,26 @@ class RadixTreeNode:
         return self.access_time < other.access_time
 
 
-def paged_prefix_len(key1: abc.Sequence[int], key2: abc.Sequence[int], page_size: int):
+def get_prefix_len(key1: abc.Sequence[int], key2: abc.Sequence[int]):
     prefix_len = 0
     while prefix_len < min(len(key1), len(key2)):
-        if key1[prefix_len:prefix_len + page_size] != key2[prefix_len:prefix_len + page_size]:
+        if key1[prefix_len] != key2[prefix_len]:
             break
-        prefix_len += page_size
+        prefix_len += 1
     return prefix_len
 
 
 class RadixTree:
     def __init__(
         self,
-        page_size: int,
         kv_cache_allocator: KVCacheAllocator
     ):
-        self.page_size = page_size
         self.root = RadixTreeNode(ref_count=1)
         self.kv_cache_allocator = kv_cache_allocator
 
     def match_prefix(self, key: list[int]):
-
-        if self.page_size != 1:
-            truncated_len = len(key) // self.page_size * self.page_size
-            key = key[:truncated_len]
-        
         node = self.root
-        child_key = tuple(key[:self.page_size])
+        child_key = key[0]
         value: list[int] = []
 
         while len(key) > 0 and child_key in node.children.keys():
@@ -148,7 +126,7 @@ class RadixTree:
             child.access_time = time.monotonic()
 
             # get max matched prefix length
-            prefix_len = paged_prefix_len(child.key, key, self.page_size)
+            prefix_len = get_prefix_len(child.key, key)
             
             if prefix_len < len(child.key):
                 new_node = self._split_node(child, prefix_len)
@@ -159,7 +137,7 @@ class RadixTree:
                 value.extend(child.value)
                 node = child
                 key = key[prefix_len:]
-                child_key = tuple(key[:self.page_size])
+                child_key = key[0] if len(key) > 0 else -1
 
         cache_indices = value
         last_prefix_node = node
@@ -167,7 +145,7 @@ class RadixTree:
     
     def insert(self, key: list[int], value: list[int]):
         node = self.root
-        child_key = tuple(key[:self.page_size])
+        child_key = key[0]
         total_prefix_len = 0
 
         while len(key) > 0 and child_key in node.children.keys():
@@ -175,12 +153,12 @@ class RadixTree:
             child.access_time = time.monotonic()
 
             # get max matched prefix length
-            prefix_len = paged_prefix_len(child.key, key, self.page_size)
+            prefix_len = get_prefix_len(child.key, key)
             total_prefix_len += prefix_len
 
             key = key[prefix_len:]
             value = value[prefix_len:]
-            child_key = tuple(key[:self.page_size])
+            child_key = key[0] if len(key) > 0 else -1
 
             if prefix_len < len(child.key):
                 new_node = self._split_node(child, prefix_len)
@@ -236,13 +214,6 @@ class RadixTree:
 
             if evict_node.parent and len(evict_node.parent.children) == 0:
                 heapq.heappush(leaves, evict_node.parent)
-    
-    def get_node_prefix_len(self, node: RadixTreeNode):
-        length = 0
-        while node != self.root:
-            length += len(node.key)
-            node = node.parent or self.root
-        return length
 
     def _get_leaf_nodes(self):
         leaf_nodes: list[RadixTreeNode] = []
@@ -259,7 +230,7 @@ class RadixTree:
     def _remove_node(self, node: RadixTreeNode):
         parent_node = node.parent
         if parent_node:
-            child_key = node.key[:self.page_size]
+            child_key = node.key[0]
             del parent_node.children[child_key]
     
     def _add_node(
@@ -276,14 +247,14 @@ class RadixTree:
             ref_count=ref_count
         )
         new_node.parent = parent
-        parent.children[new_node.key[:self.page_size]] = new_node
+        parent.children[new_node.key[0]] = new_node
         return new_node
 
     def _split_node(self, node: RadixTreeNode, split_len: int):
         # parent -> node ==> parent -> new_node -> node, return new_node
         new_node = RadixTreeNode(
             parent=node.parent,
-            children={node.key[split_len:split_len + self.page_size]: node},
+            children={node.key[split_len]: node},
             key=node.key[:split_len],
             value=node.value[:split_len],
             ref_count=node.ref_count
@@ -293,7 +264,7 @@ class RadixTree:
         node.value = node.value[split_len:]
 
         if new_node.parent:
-            new_child_key = new_node.key[:self.page_size]
+            new_child_key = new_node.key[0]
             new_node.parent.children[new_child_key] = new_node
 
         return new_node
@@ -302,11 +273,9 @@ class KVCacheManager:
     def __init__(
         self,
         size: int,
-        page_size: int = 1
     ):
-        self.page_size = page_size
-        self.kv_cache_allocator = KVCacheAllocator(size, page_size)
-        self.radix_tree = RadixTree(page_size, self.kv_cache_allocator)
+        self.kv_cache_allocator = KVCacheAllocator(size)
+        self.radix_tree = RadixTree(self.kv_cache_allocator)
         # sequence -> (prefix_len, last_node)
         self.unfinished_sequences: dict[Sequence, tuple[int, RadixTreeNode]] = {}
 
@@ -325,18 +294,11 @@ class KVCacheManager:
         token_ids = sequence.token_ids
         kv_indices = sequence.kv_indices
 
-        if self.page_size != 1:
-            truncated_kv_len = len(kv_indices) // self.page_size * self.page_size
-            kv_indices = kv_indices[:truncated_kv_len]
-            token_ids = token_ids[:truncated_kv_len]
-            self.kv_cache_allocator.free(kv_indices[truncated_kv_len:])
-
         new_prefix_len, new_last_node = self.radix_tree.insert(token_ids, kv_indices)
         old_prefix_len, old_last_node = self.unfinished_sequences.get(sequence, (0, self.radix_tree.root))
 
         # 相当于把 token_ids 对应的 kv_indices 取出来
         new_indices, _ = self.radix_tree.match_prefix(token_ids)
-        self.unfinished_sequences[sequence] = (len(new_indices), new_last_node)
 
         # free the unmatched value slots
         # 这种情况发生在存在两个seq都没有插入radix tree，但是包含相同的prefix
@@ -352,6 +314,7 @@ class KVCacheManager:
             # 更新sequence的kv_indices的重复部分
             sequence.kv_indices[old_prefix_len:new_prefix_len] = new_indices[old_prefix_len:new_prefix_len]
 
+        self.unfinished_sequences[sequence] = (len(new_indices), new_last_node)
         self.radix_tree.dec_ref(old_last_node)
         self.radix_tree.inc_ref(new_last_node)
 

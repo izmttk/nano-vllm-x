@@ -5,11 +5,10 @@ from core.executor import Executor
 from core.common import Sequence, SamplingParams, SequenceStatus, ForwardBatch, ForwardMode
 from core.kv_cache import KVCacheAllocator
 class Scheduler:
-    def __init__(self, executor: Executor, kv_cache_size: int = 1024, page_size: int = 16):
+    def __init__(self, executor: Executor, kv_cache_size: int = 1024):
         self.executor = executor
         self.sequences: Dict[int, Sequence] = {}
-        self.kv_allocator = KVCacheAllocator(kv_cache_size, page_size)
-        self.page_size = page_size
+        self.kv_allocator = KVCacheAllocator(kv_cache_size)
         
     def add_sequence(self, 
                     prompt_token_ids: List[int], 
@@ -21,17 +20,11 @@ class Scheduler:
         seq_id = uuid.uuid4().int  # 使用UUID生成唯一的seq_id
         
         # 为序列分配KV cache空间
-        required_pages = (len(prompt_token_ids) + sampling_params.max_new_tokens + self.page_size - 1) // self.page_size
-        allocated_pages = self.kv_allocator.alloc(required_pages)
+        required_slots = len(prompt_token_ids) + sampling_params.max_new_tokens
+        allocated_slots = self.kv_allocator.alloc(required_slots)
         
-        if allocated_pages is None:
+        if allocated_slots is None:
             raise RuntimeError("Not enough KV cache space available")
-        
-        # 创建KV indices
-        kv_indices = []
-        for page in allocated_pages:
-            for i in range(self.page_size):
-                kv_indices.append(page + i)
         
         sequence = Sequence(
             seq_id=seq_id,
@@ -39,7 +32,7 @@ class Scheduler:
             num_tokens=len(prompt_token_ids),
             token_ids=prompt_token_ids.copy(),
             sampling_params=sampling_params,
-            kv_indices=kv_indices[:len(prompt_token_ids) + sampling_params.max_new_tokens],
+            kv_indices=allocated_slots,
             cached_kv_len=0,
         )
         
