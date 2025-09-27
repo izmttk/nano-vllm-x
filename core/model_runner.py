@@ -15,13 +15,13 @@ class ModelRunner:
         device: torch.device,
 
         # KV cache parameters
-        kv_cache_num_tokens: int,
+        kv_cache_size: int,
     ):
         self.model_path = model
         self.rank = rank
         self.device = device
 
-        self.kv_cache_num_tokens = kv_cache_num_tokens
+        self.kv_cache_size = kv_cache_size
     
     def load_model(self):
         
@@ -61,7 +61,7 @@ class ModelRunner:
         self.kv_cache = KVCachePool(
             dtype=self.hf_config.torch_dtype, # type: ignore
             device=self.device,
-            num_tokens=self.kv_cache_num_tokens,
+            num_tokens=self.kv_cache_size,
             num_layers=self.num_layers,
             num_heads=self.num_kv_heads,
             head_dim=self.head_dim,

@@ -270,14 +270,11 @@ class RadixTree:
         return new_node
 
 class KVCacheManager:
-    def __init__(
-        self,
-        size: int,
-    ):
+    def __init__(self, size: int):
         self.kv_cache_allocator = KVCacheAllocator(size)
         self.radix_tree = RadixTree(self.kv_cache_allocator)
-        # sequence -> (prefix_len, last_node)
-        self.unfinished_sequences: dict[Sequence, tuple[int, RadixTreeNode]] = {}
+        # seq_id -> (prefix_len, last_node)
+        self.unfinished_sequences: dict[int, tuple[int, RadixTreeNode]] = {}
 
     def alloc_slots(self, num_slots: int):
         indices = self.kv_cache_allocator.alloc(num_slots)
@@ -290,12 +287,17 @@ class KVCacheManager:
             raise RuntimeError(f"Failed to allocate {num_slots} slots, KV cache is full!")
         return indices
 
-    def cache_sequence(self, sequence: Sequence):
-        token_ids = sequence.token_ids
-        kv_indices = sequence.kv_indices
+    def free_slots(self, indices: abc.Iterable[int]):
+        self.kv_cache_allocator.free(indices)
+
+    def cache_sequence(self, seq: Sequence):
+        token_ids = seq.token_ids
+        kv_indices = seq.kv_indices
 
         new_prefix_len, new_last_node = self.radix_tree.insert(token_ids, kv_indices)
-        old_prefix_len, old_last_node = self.unfinished_sequences.get(sequence, (0, self.radix_tree.root))
+        old_prefix_len, old_last_node = self.unfinished_sequences.get(
+            seq.seq_id, (0, self.radix_tree.root)
+        )
 
         # 相当于把 token_ids 对应的 kv_indices 取出来
         new_indices, _ = self.radix_tree.match_prefix(token_ids)
@@ -312,14 +314,16 @@ class KVCacheManager:
             # 释放重复的kv cache slots
             self.kv_cache_allocator.free(kv_indices[old_prefix_len:new_prefix_len])
             # 更新sequence的kv_indices的重复部分
-            sequence.kv_indices[old_prefix_len:new_prefix_len] = new_indices[old_prefix_len:new_prefix_len]
+            seq.kv_indices[old_prefix_len:new_prefix_len] = new_indices[old_prefix_len:new_prefix_len]
 
-        self.unfinished_sequences[sequence] = (len(new_indices), new_last_node)
+        self.unfinished_sequences[seq.seq_id] = (len(new_indices), new_last_node)
         self.radix_tree.dec_ref(old_last_node)
         self.radix_tree.inc_ref(new_last_node)
 
-        if sequence.status == SequenceStatus.FINISHED:
+        if seq.status == SequenceStatus.FINISHED:
             self.radix_tree.dec_ref(new_last_node)
-            del self.unfinished_sequences[sequence]
+            if seq.seq_id in self.unfinished_sequences:
+                del self.unfinished_sequences[seq.seq_id]
             # kv indices 交给 radix tree 管理了，此后 seq 中的 kv_indices 可能不再有效
-            sequence.kv_indices.clear()
+            seq.kv_indices.clear()
+            seq.cached_kv_len = 0

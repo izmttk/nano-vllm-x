@@ -1,128 +1,166 @@
-from typing import List, Dict, Optional
-import time
-import uuid
-from core.executor import Executor
-from core.common import Sequence, SamplingParams, SequenceStatus, ForwardBatch, ForwardMode
-from core.kv_cache import KVCacheAllocator
+from collections import deque
+from typing import Deque
+
+from core.common import (
+    Sequence,
+    SequenceStatus,
+    ForwardMode,
+    ForwardBatch,
+)
+
+from core.kv_cache import KVCacheManager
+
 class Scheduler:
-    def __init__(self, executor: Executor, kv_cache_size: int = 1024):
-        self.executor = executor
-        self.sequences: Dict[int, Sequence] = {}
-        self.kv_allocator = KVCacheAllocator(kv_cache_size)
-        
-    def add_sequence(self, 
-                    prompt_token_ids: List[int], 
-                    sampling_params: Optional[SamplingParams] = None) -> int:
-        """添加一个新的序列到调度器"""
-        if sampling_params is None:
-            sampling_params = SamplingParams()
-            
-        seq_id = uuid.uuid4().int  # 使用UUID生成唯一的seq_id
-        
-        # 为序列分配KV cache空间
-        required_slots = len(prompt_token_ids) + sampling_params.max_new_tokens
-        allocated_slots = self.kv_allocator.alloc(required_slots)
-        
-        if allocated_slots is None:
-            raise RuntimeError("Not enough KV cache space available")
-        
-        sequence = Sequence(
-            seq_id=seq_id,
-            status=SequenceStatus.WAITING,
-            num_tokens=len(prompt_token_ids),
-            token_ids=prompt_token_ids.copy(),
-            sampling_params=sampling_params,
-            kv_indices=allocated_slots,
-            cached_kv_len=0,
-        )
-        
-        self.sequences[seq_id] = sequence
-        print(f"Added sequence {seq_id} with {len(prompt_token_ids)} prompt tokens")
-        return seq_id
-    
-    def step(self) -> Dict[int, List[int]]:
-        """执行一步生成"""
-        if not self.sequences:
-            return {}
-        
-        # 分离prefill和decode序列
-        prefill_seqs = []
-        decode_seqs = []
-        
-        for seq in self.sequences.values():
-            if seq.status == SequenceStatus.FINISHED:
-                continue
-                
-            if seq.cached_kv_len == 0:
-                # 需要prefill
-                prefill_seqs.append(seq)
-            elif seq.cached_kv_len < len(seq.token_ids):
-                # 需要decode
-                decode_seqs.append(seq)
-        
-        results = {}
-        
-        # 处理prefill
-        if prefill_seqs:
-            print(f"Processing {len(prefill_seqs)} prefill sequences")
-            batch = ForwardBatch(
+    """
+    A lightweight scheduler.
+
+    - Maintains two queues: waiting (prefill) and running (decode)
+    - Integrates a KVCacheManager for prefix caching and eviction
+
+    Notes
+    -----
+    - Policy: prefill-first. If there are waiting sequences, schedule a prefill batch.
+      Otherwise schedule a decode batch from running sequences (round-robin).
+    - For KV cache:
+        * On adding a new sequence, KV slots are reserved for the prompt length.
+        * When appending new tokens (decode outputs), reserve 1 slot per token.
+        * cache_sequence() is called to update the radix tree and deduplicate.
+    - Updating cached_kv_len and appending new tokens should be done by the caller
+      after model execution.
+    """
+
+    def __init__(
+        self,
+        kv_cache_size: int,
+        max_bs: int = 32,
+    ):
+        self.kv_cache_size = kv_cache_size
+        self.max_bs = max_bs
+
+        # Queues and registries
+        self.waiting: Deque[Sequence] = deque()
+        self.running: Deque[Sequence] = deque()
+
+        self.kv_manager = KVCacheManager(size=self.kv_cache_size)
+
+    def add_sequence(self, seq: Sequence):
+        """
+        Add a new sequence to the scheduler.
+        """
+        seq.status = SequenceStatus.WAITING
+        self.waiting.append(seq)
+
+    def schedule(self) -> ForwardBatch | None:
+        """
+        Pick a batch of sequences to run next, returning a list of sequences.
+        """
+        batch: list[Sequence] = []
+
+        # Prefill-first: schedule waiting sequences if any
+        while self.waiting and len(batch) < self.max_bs:
+            seq = self.waiting.popleft()
+            # Mark as running when scheduled for its first prefill
+            seq.status = SequenceStatus.RUNNING
+            self.alloc_kv_slots(seq)
+            batch.append(seq)
+            self.running.append(seq)
+        if batch:
+            return ForwardBatch(
                 foward_mode=ForwardMode.PREFILL,
-                num_seqs=len(prefill_seqs),
-                seqs=prefill_seqs,
-                max_bs=len(prefill_seqs)
+                num_seqs=len(batch),
+                seqs=batch,
+                max_bs=self.max_bs
             )
-            
-            try:
-                new_token_ids = self.executor.execute("execute_model", batch)
-                
-                for seq, new_token_id in zip(prefill_seqs, new_token_ids):
-                    seq.token_ids.append(new_token_id)
-                    seq.cached_kv_len = len(seq.token_ids) - 1  # 除了最新的token，其他都已缓存
-                    seq.status = SequenceStatus.RUNNING
-                    results[seq.seq_id] = seq.token_ids.copy()
-                    
-            except Exception as e:
-                print(f"Error in prefill: {e}")
-                for seq in prefill_seqs:
-                    seq.status = SequenceStatus.FINISHED
-        
-        # 处理decode
-        if decode_seqs:
-            print(f"Processing {len(decode_seqs)} decode sequences")
-            batch = ForwardBatch(
+
+        # Otherwise, schedule decode from running queue
+        while self.running and len(batch) < self.max_bs:
+            seq = self.running.popleft()
+            is_allocated = False
+            while not is_allocated:
+                try:
+                    self.alloc_kv_slots(seq)
+                    is_allocated = True
+                except RuntimeError:
+                    # Failed to allocate slots, preempt
+                    if self.running:
+                        # first preempt another running seq
+                        seq_preempted = self.running.pop()
+                        self.preempt(seq_preempted)
+                    else:
+                        # no other running seq, keep itself in running queue and break
+                        self.running.appendleft(seq)
+                        break
+            if is_allocated:
+                batch.append(seq)
+        # running queue may exists one seq (not enough slots for it)
+        self.running.extendleft(reversed(batch))
+        if batch:
+            return ForwardBatch(
                 foward_mode=ForwardMode.DECODE,
-                num_seqs=len(decode_seqs),
-                seqs=decode_seqs,
-                max_bs=len(decode_seqs)
+                num_seqs=len(batch),
+                seqs=batch,
+                max_bs=self.max_bs
             )
-            
-            try:
-                new_token_ids = self.executor.execute("execute_model", batch)
-                
-                for seq, new_token_id in zip(decode_seqs, new_token_ids):
-                    seq.token_ids.append(new_token_id)
-                    seq.cached_kv_len = len(seq.token_ids) - 1
-                    
-                    # 检查是否达到最大长度或遇到结束token
-                    if (len(seq.token_ids) >= len(seq.kv_indices) or 
-                        len(seq.token_ids) - seq.num_tokens >= seq.sampling_params.max_new_tokens):
-                        seq.status = SequenceStatus.FINISHED
-                        print(f"Sequence {seq.seq_id} finished generation")
-                    
-                    results[seq.seq_id] = seq.token_ids.copy()
-                    
-            except Exception as e:
-                print(f"Error in decode: {e}")
-                for seq in decode_seqs:
-                    seq.status = SequenceStatus.FINISHED
         
-        return results
-    
-    def is_finished(self, seq_id: int) -> bool:
-        """检查序列是否已完成"""
-        seq = self.sequences.get(seq_id)
-        return seq is None or seq.status == SequenceStatus.FINISHED
-    
-    def get_sequence(self, seq_id: int) -> Optional[Sequence]:
-        """获取序列"""
-        return self.sequences.get(seq_id)
+        return None
+
+    def alloc_kv_slots(self, seq: Sequence):
+        """
+        Allocate KV slots for all uncached tokens in the sequence.
+        """
+        num_needed = len(seq.token_ids) - len(seq.kv_indices)
+        if num_needed <= 0:
+            return
+        new_slots = self.kv_manager.alloc_slots(num_needed)
+        seq.kv_indices.extend(new_slots)
+
+    def free_kv_slots(self, seq: Sequence):
+        """
+        Free all KV slots associated with a sequence.
+        """
+        if not seq.kv_indices:
+            return
+        self.kv_manager.free_slots(seq.kv_indices)
+        seq.kv_indices.clear()
+        seq.cached_kv_len = 0
+
+    def preempt(self, seq: Sequence):
+        """
+        Preempt a running sequence back to waiting queue for prefill.
+        """
+        if seq.status == SequenceStatus.FINISHED:
+            return
+        if not seq in self.running:
+            return
+        self.running.remove(seq)
+        self.free_kv_slots(seq)
+        seq.status = SequenceStatus.WAITING
+        self.waiting.appendleft(seq)  # Preempt to the front of waiting queue
+
+    def update_sequence(self, seq: Sequence, new_token_id: int):
+        """
+        Update a sequence after model execution.
+        """
+        if seq.status != SequenceStatus.RUNNING:
+            return
+        
+        seq.cached_kv_len = len(seq.kv_indices)
+        seq.token_ids.append(new_token_id)
+        seq.num_tokens = len(seq.token_ids)
+
+    def finish_sequence(self, seq: Sequence):
+        """
+        Mark a sequence as finished and cache its prefix in KV cache.
+        """
+        if seq.status == SequenceStatus.FINISHED:
+            return
+
+        if seq.status == SequenceStatus.WAITING:
+            self.waiting.remove(seq)
+        
+        if seq.status == SequenceStatus.RUNNING:
+            self.running.remove(seq)
+        
+        seq.status = SequenceStatus.FINISHED
+        self.kv_manager.cache_sequence(seq)
+

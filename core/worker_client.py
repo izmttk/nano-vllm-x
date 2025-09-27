@@ -7,6 +7,7 @@ class WorkerClient:
     def __init__(
         self,
         model: str,
+        kv_cache_size: int,
         tp_rank: int,
         tp_size: int,
         pp_rank: int,
@@ -14,6 +15,8 @@ class WorkerClient:
         nccl_port: int = 29500,
     ):
         self.model = model
+        self.kv_cache_size = kv_cache_size
+        
         self.tp_rank = tp_rank
         self.tp_size = tp_size
         self.pp_rank = pp_rank
@@ -48,6 +51,7 @@ class WorkerClient:
     def worker_main_loop(self):
         worker = Worker(
             model=self.model,
+            kv_cache_size=self.kv_cache_size,
             tp_rank=self.tp_rank,
             tp_size=self.tp_size,
             pp_rank=self.pp_rank,

@@ -5,15 +5,19 @@ import threading
 from concurrent.futures import Future
 import torch
 
+from core.common import ForwardBatch
+
 class Executor:
     def __init__(
         self,
         model: str,
+        kv_cache_size: int,
         tp_size: int,
         pp_size: int,
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
     ):
+        self.kv_cache_size = kv_cache_size
         self.tp_size = tp_size
         self.pp_size = pp_size
         self.nccl_port = nccl_port
@@ -30,6 +34,7 @@ class Executor:
             for tp_rank in range(tp_size):
                 worker = WorkerClient(
                     model=model,
+                    kv_cache_size=kv_cache_size,
                     tp_rank=tp_rank,
                     tp_size=tp_size,
                     pp_rank=pp_rank,
@@ -82,11 +87,11 @@ class Executor:
         
         future = Future()
         self.pending[request_id] = future
-        print(f"Sending request {request_id} for method {method} with args {args} and kwargs {kwargs}")
+        print(f"Executor sending request {request_id} for method {method} with args {args} and kwargs {kwargs}")
         for worker in self.workers:
             worker.send_request(request_id, request)
         return future.result()
 
-    def execute_model(self, input_ids: torch.Tensor):
+    def execute_model(self, batch: ForwardBatch):
         print("Executor is executing the model...")
-        return self.execute("execute_model", input_ids=input_ids)
+        return self.execute("execute_model", batch=batch)

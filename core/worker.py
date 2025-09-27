@@ -9,11 +9,14 @@ from distributed.parallel_state import (
     destroy_model_parallel
 )
 from core.model_runner import ModelRunner
+from core.common import ForwardBatch
 
 class Worker:
     def __init__(
         self,
         model: str,
+        kv_cache_size: int,
+        
         tp_rank: int,
         tp_size: int,
         pp_rank: int,
@@ -21,6 +24,8 @@ class Worker:
         nccl_port: int,
     ):
         self.model = model
+        self.kv_cache_size = kv_cache_size
+        
         self.tp_rank = tp_rank
         self.pp_rank = pp_rank
         self.tp_size = tp_size
@@ -54,6 +59,7 @@ class Worker:
             model=self.model,
             rank=self.rank,
             device=self.device,
+            kv_cache_size=self.kv_cache_size,
         )
         print(f"Worker {self.rank} started with TP rank {self.tp_rank}, PP rank {self.pp_rank}.")
 
@@ -65,5 +71,5 @@ class Worker:
     def load_model(self):
         self.model_runner.load_model()
 
-    def execute_model(self, input_ids: torch.Tensor):
-        return self.model_runner.execute_model(input_ids)
+    def execute_model(self, batch: ForwardBatch):
+        return self.model_runner.execute_model(batch)

@@ -2,6 +2,7 @@ from typing import Optional
 from dataclasses import dataclass, field
 import enum
 import torch
+import uuid
 
 @dataclass
 class SamplingParams:
@@ -13,6 +14,7 @@ class SamplingParams:
 
     max_new_tokens: int = 128
     ignore_eos: bool = False
+    eos_token_id: int = -1
 
 class SequenceStatus(enum.Enum):
     WAITING = enum.auto()
@@ -21,19 +23,20 @@ class SequenceStatus(enum.Enum):
 
 @dataclass
 class Sequence:
-    seq_id: int
+    seq_id: int = field(default_factory=lambda: uuid.uuid4().int)
     status: SequenceStatus = SequenceStatus.WAITING
     num_tokens: int = 0
-    tokens: list[str] = field(default_factory=list)
+    prompt_len: int = 0
+    # tokens: list[str] = field(default_factory=list)
     token_ids: list[int] = field(default_factory=list)
     sampling_params: SamplingParams = field(default_factory=SamplingParams)
     kv_indices: list[int] = field(default_factory=list)
     cached_kv_len: int = 0
-    stream:  bool = False
+    # stream:  bool = False
 
 class ForwardMode(enum.Enum):
-    PREFILL = 0
-    DECODE = 1
+    PREFILL = enum.auto()
+    DECODE = enum.auto()
 
 @dataclass
 class ForwardBatch:
