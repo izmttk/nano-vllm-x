@@ -1,5 +1,6 @@
 from typing import Optional
 from core.engine import Engine
+from core.common import SamplingParams
 import torch.multiprocessing as mp
 from utils import bind_parent_process_lifecycle
 import threading
@@ -24,34 +25,19 @@ class EngineClient:
         self.nccl_port = nccl_port
         self.device_ids = device_ids
         
-        self.methods = {}  # 用于存储注册的方法
-        
-        
         self.mp_ctx = mp.get_context('spawn')
         self.input_queue = self.mp_ctx.Queue()
         self.output_queue = self.mp_ctx.Queue()
+        self.shutdown_event = self.mp_ctx.Event()
         
-        
-        self.collect_response_thread = threading.Thread(
-            target=self.collect_response
-        )
-        self.collect_response_thread.start()
-        self.pending = {}  # 跟踪进行中的请求 {request_id: future}
-        
-        self.init_engine()
+        self.init_process()
 
-    def init_engine(self):
+    def init_process(self):
         self.engine_process = self.mp_ctx.Process(
             target=self.engine_main_loop,
             name=f"engine",
         )
         self.engine_process.start()
-
-    def send_request(self, request_id: str, data: dict):
-        self.input_queue.put((request_id, data))
-
-    def recv_response(self, timeout: Optional[float] = None):
-        return self.output_queue.get(timeout=timeout)
 
     @bind_parent_process_lifecycle
     def engine_main_loop(self):
@@ -64,102 +50,40 @@ class EngineClient:
             nccl_port=self.nccl_port,
             device_ids=self.device_ids,
         )
-        
-        self.methods["add_sequence"] = engine.add_sequence
-        self.methods["step"] = engine.step
-        
         while True:
-            request_id, data = self.input_queue.get()  # 等待输入
-            method_name = data.get('method')
-            if method_name == "shutdown":
-                self.output_queue.put((request_id, "shutdown"))
+            if self.shutdown_event.is_set():
                 break
-            response = self.handle_request(data)  # 处理请求
-            self.output_queue.put((request_id, response))
+            # 如果 engine 中没有未完成的请求了，即 engine 的 waiting 和 running 队列都空了
+            # 则在调用下一次 step 之前，阻塞等待一个新的请求
+            if not engine.has_unfinished_sequences():
+                args = self.input_queue.get()
+                engine.add_sequence(*args)
+            
+            # 其他情况下，即存在未完成的请求，则需要继续调用 step
+            while not self.input_queue.empty():
+                args = self.input_queue.get()
+                engine.add_sequence(*args)
+
+            outputs = engine.step()
+            self.output_queue.put(outputs)
+
         engine.shutdown()
         print(f"Engine has shut down.")
 
-    def handle_request(self, request):
-        """处理单个请求"""
-        try:
-            method_name = request['method']
-            args = request.get('args', [])
-            kwargs = request.get('kwargs', {})
-            # 查找并调用注册的方法
-            if method_name in self.methods:
-                method = self.methods[method_name]
-                # 执行方法
-                result = method(*args, **kwargs)
-                
-                # 返回成功结果
-                return {
-                    'status': 'success',
-                    'result': result
-                }
-            else:
-                # 方法不存在
-                return {
-                    'status': 'error',
-                    'error': f"Method '{method_name}' not found"
-                }
-        except Exception as e:
-            # 处理异常
-            return {
-                'status': 'error',
-                'error': str(e)
-            }
-
-    def collect_response(self):
-        while True:
-            request_id, data = self.recv_response()
-            future = self.pending.pop(request_id, None)
-            if future:
-                if data == "shutdown":
-                    future.set_result(None)
-                    break
-                assert isinstance(data, dict)
-                if data['status'] == 'success':
-                    future.set_result(data['result'])
-                else:
-                    future.set_exception(Exception(data['error']))
-        print("Engine stopped response collection.")
-
-    def execute(self, method, *args, **kwargs):
-        """发起RPC调用，返回调用结果"""
-        
-        request_id = str(id(kwargs))  # 生成唯一ID
-        request = {
-            'method': method,
-            'args': args,
-            'kwargs': kwargs
-        }
-        
-        future = Future()
-        self.pending[request_id] = future
-        print(f"EngineClient sending request {request_id} for method {method} with args {args} and kwargs {kwargs}")
-        self.send_request(request_id, request)
-        return future.result()
-
     def shutdown(self):
-        self.execute("shutdown")
-
+        self.shutdown_event.set()
         self.engine_process.join()
-        self.collect_response_thread.join()
-
         print("Engine has been shut down.")
-        
 
     def add_sequence(
         self,
+        sequence_id: int,
         prompt_token_ids: list[int],
-        sampling_params,
+        sampling_params: SamplingParams
     ):
-        self.execute(
-            "add_sequence",
-            prompt_token_ids,
-            sampling_params,
+        self.input_queue.put(
+            (sequence_id, prompt_token_ids, sampling_params)
         )
-    
-    def step(self) -> list[int]:
-        output_ids = self.execute("step")
-        return output_ids
+
+    def get_output(self) -> dict[int, list[int]]:
+        return self.output_queue.get()

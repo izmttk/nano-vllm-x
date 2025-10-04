@@ -1,7 +1,4 @@
-from typing import Optional
-
-import torch
-from core.common import SamplingParams, Sequence, ForwardMode
+from core.common import SamplingParams, Sequence
 from core.executor import Executor
 from core.scheduler import Scheduler
 
@@ -36,6 +33,7 @@ class Engine:
 
     def add_sequence(
         self,
+        sequence_id: int,
         prompt_token_ids: list[int],
         sampling_params: SamplingParams,
     ):
@@ -43,6 +41,7 @@ class Engine:
         Add a new sequence to the engine's scheduler.
         """
         seq = Sequence(
+            seq_id=sequence_id,
             token_ids=prompt_token_ids,
             num_tokens=len(prompt_token_ids),
             prompt_len=len(prompt_token_ids),
@@ -50,7 +49,7 @@ class Engine:
         )
         self.scheduler.add_sequence(seq)
 
-    def step(self) -> list[int]:
+    def step(self) -> dict[int, list[int]]:
         """
         Performs one step of inference.
 
@@ -60,9 +59,10 @@ class Engine:
         """
         batch = self.scheduler.schedule()
         if not batch:
-            return []
+            return {}
 
         output_ids = self.model_executor.execute_model(batch)
+        outputs = {}
         
         # Update sequences with the model output
         for seq, new_token_id in zip(batch.seqs, output_ids):
@@ -70,8 +70,10 @@ class Engine:
 
             if self._is_sequence_finished(seq):
                 self.scheduler.finish_sequence(seq)
+            
+            outputs[seq.seq_id] = new_token_id
         
-        return output_ids
+        return outputs # {seq_id: token_ids}
 
     def _is_sequence_finished(self, seq: Sequence) -> bool:
         # Check for stop tokens
@@ -84,3 +86,6 @@ class Engine:
 
     def shutdown(self):
         self.model_executor.shutdown()
+        
+    def has_unfinished_sequences(self):
+        return self.scheduler.has_unfinished_sequences()

@@ -164,3 +164,5 @@ class Scheduler:
         seq.status = SequenceStatus.FINISHED
         self.kv_manager.cache_sequence(seq)
 
+    def has_unfinished_sequences(self) -> bool:
+        return bool(self.waiting or self.running)
