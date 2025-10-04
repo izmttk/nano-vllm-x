@@ -1,7 +1,13 @@
 from core.common import SamplingParams, Sequence
 from core.executor import Executor
 from core.scheduler import Scheduler
+from dataclasses import dataclass, field
 
+@dataclass
+class EngineOutput:
+    seq_id: int
+    new_token_id: int
+    is_finished: bool
 
 class Engine:
     """
@@ -49,7 +55,7 @@ class Engine:
         )
         self.scheduler.add_sequence(seq)
 
-    def step(self) -> dict[int, list[int]]:
+    def step(self) -> list[EngineOutput]:
         """
         Performs one step of inference.
 
@@ -59,21 +65,26 @@ class Engine:
         """
         batch = self.scheduler.schedule()
         if not batch:
-            return {}
+            return []
 
         output_ids = self.model_executor.execute_model(batch)
-        outputs = {}
+        outputs: list[EngineOutput] = []
         
         # Update sequences with the model output
         for seq, new_token_id in zip(batch.seqs, output_ids):
             self.scheduler.update_sequence(seq, new_token_id)
 
-            if self._is_sequence_finished(seq):
+            is_finished = self._is_sequence_finished(seq)
+            if is_finished:
                 self.scheduler.finish_sequence(seq)
             
-            outputs[seq.seq_id] = new_token_id
+            outputs.append(EngineOutput(
+                seq_id=seq.seq_id,
+                new_token_id=new_token_id,
+                is_finished=is_finished,
+            ))
         
-        return outputs # {seq_id: token_ids}
+        return outputs
 
     def _is_sequence_finished(self, seq: Sequence) -> bool:
         # Check for stop tokens

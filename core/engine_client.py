@@ -1,10 +1,8 @@
 from typing import Optional
-from core.engine import Engine
+from core.engine import Engine, EngineOutput
 from core.common import SamplingParams
 import torch.multiprocessing as mp
 from utils import bind_parent_process_lifecycle
-import threading
-from concurrent.futures import Future
 
 class EngineClient:
     def __init__(
@@ -85,5 +83,5 @@ class EngineClient:
             (sequence_id, prompt_token_ids, sampling_params)
         )
 
-    def get_output(self) -> dict[int, list[int]]:
+    def get_output(self) -> list[EngineOutput]:
         return self.output_queue.get()
