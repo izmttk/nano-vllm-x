@@ -42,7 +42,7 @@ class WorkerClient:
         self.worker_process.start()
 
     def send_request(self, request_id: str, data: dict):
-        self.input_queue.put((request_id, data))
+        self.input_queue.put_nowait((request_id, data))
 
     def recv_response(self, timeout: Optional[float] = None):
         return self.output_queue.get(timeout=timeout)
@@ -67,10 +67,10 @@ class WorkerClient:
             request_id, data = self.input_queue.get()  # 等待输入
             method_name = data.get('method')
             if method_name == "shutdown":
-                self.output_queue.put((request_id, "shutdown"))
+                self.output_queue.put_nowait((request_id, "shutdown"))
                 break
             response = self.handle_request(data)  # 处理请求
-            self.output_queue.put((request_id, response))
+            self.output_queue.put_nowait((request_id, response))
         worker.destroy_environment()
         print(f"Worker {self.rank} has shut down.")
 

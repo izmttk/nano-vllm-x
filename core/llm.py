@@ -50,10 +50,12 @@ class LLM:
                     q = self.request_states[seq_id]
                     token_str = self.detokenize([[new_token_id]])[0]
                     if output.is_finished:
-                        await q.put(None)  # Sentinel for end of generation
+                        q.put_nowait(None)  # Sentinel for end of generation
                         del self.request_states[seq_id]
                     else:
-                        await q.put(token_str)
+                        q.put_nowait(token_str)
+            # 让出控制权，避免阻塞事件循环
+            await asyncio.sleep(0)
 
     def tokenize(self, texts: list[str]) -> list[list[int]]:
         return self.tokenizer(texts)["input_ids"] # type: ignore

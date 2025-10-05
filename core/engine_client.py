@@ -26,7 +26,6 @@ class EngineClient:
         self.mp_ctx = mp.get_context('spawn')
         self.input_queue = self.mp_ctx.Queue()
         self.output_queue = self.mp_ctx.Queue()
-        self.shutdown_event = self.mp_ctx.Event()
         
         self.init_process()
 
@@ -49,27 +48,36 @@ class EngineClient:
             device_ids=self.device_ids,
         )
         while True:
-            if self.shutdown_event.is_set():
-                break
+            is_shutdown = False
             # 如果 engine 中没有未完成的请求了，即 engine 的 waiting 和 running 队列都空了
             # 则在调用下一次 step 之前，阻塞等待一个新的请求
             if not engine.has_unfinished_sequences():
                 args = self.input_queue.get()
-                engine.add_sequence(*args)
+                if args == "shutdown":
+                    is_shutdown = True
+                else:
+                    engine.add_sequence(*args)
             
             # 其他情况下，即存在未完成的请求，则需要继续调用 step
             while not self.input_queue.empty():
                 args = self.input_queue.get()
-                engine.add_sequence(*args)
-
+                if args == "shutdown":
+                    is_shutdown = True
+                    break
+                else:
+                    engine.add_sequence(*args)
+                    
+            if is_shutdown:
+                break
+            
             outputs = engine.step()
-            self.output_queue.put(outputs)
+            self.output_queue.put_nowait(outputs)
 
         engine.shutdown()
         print(f"Engine has shut down.")
 
     def shutdown(self):
-        self.shutdown_event.set()
+        self.input_queue.put_nowait("shutdown")  # Send shutdown signal
         self.engine_process.join()
         print("Engine has been shut down.")
 
@@ -79,7 +87,7 @@ class EngineClient:
         prompt_token_ids: list[int],
         sampling_params: SamplingParams
     ):
-        self.input_queue.put(
+        self.input_queue.put_nowait(
             (sequence_id, prompt_token_ids, sampling_params)
         )
 
