@@ -4,6 +4,8 @@ from core.common import SamplingParams
 import asyncio
 from transformers import AutoTokenizer, PreTrainedTokenizer
 import uuid
+import signal
+import weakref
 
 def init_tokenizer(model: str) -> PreTrainedTokenizer:
     tokenizer = AutoTokenizer.from_pretrained(model, use_fast=False, trust_remote_code=True)
@@ -12,6 +14,16 @@ def init_tokenizer(model: str) -> PreTrainedTokenizer:
     if tokenizer.unk_token is None:
         tokenizer.unk_token = tokenizer.eos_token
     return tokenizer
+
+_llm_instances = weakref.WeakSet()
+
+def signal_handler(sig, frame):
+    for llm in list(_llm_instances):
+        llm.shutdown()
+    raise SystemExit()
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 class LLM:
     def __init__(
@@ -39,7 +51,8 @@ class LLM:
         self.request_states: dict[int, asyncio.Queue[str | None]] = {}
         self.output_handler_task = asyncio.create_task(self._handle_outputs())
 
-    
+        _llm_instances.add(self)
+
     async def _handle_outputs(self):
         while True:
             outputs = self.engine.get_output()
