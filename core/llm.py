@@ -63,6 +63,7 @@ class LLM:
                     q = self.request_states[seq_id]
                     token_str = self.detokenize([[new_token_id]])[0]
                     if output.is_finished:
+                        q.put_nowait(token_str)
                         q.put_nowait(None)  # Sentinel for end of generation
                         del self.request_states[seq_id]
                     else:
