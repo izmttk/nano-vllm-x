@@ -40,7 +40,7 @@ class ForwardMode(enum.Enum):
 
 @dataclass
 class ForwardBatch:
-    foward_mode: ForwardMode
+    forward_mode: ForwardMode
     num_seqs: int
     seqs: list[Sequence]
     max_bs: int

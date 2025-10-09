@@ -86,6 +86,9 @@ class LLM:
         seq_id = uuid.uuid4().int
         q: asyncio.Queue[str | None] = asyncio.Queue()
         
+        if params.eos_token_id == -1:
+            params.eos_token_id = self.tokenizer.eos_token_id  # type: ignore
+        
         self.request_states[seq_id] = q
         self.engine.add_sequence(
             sequence_id=seq_id,

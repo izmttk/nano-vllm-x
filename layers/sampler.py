@@ -51,7 +51,7 @@ class Sampler(nn.Module):
         # Sample the next tokens.
         batch_next_token_ids = torch.multinomial(probs, num_samples=1)
 
-        return batch_next_token_ids
+        return batch_next_token_ids.squeeze(dim=-1)
 
 
 def _apply_top_k_top_p(

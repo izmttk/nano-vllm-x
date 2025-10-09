@@ -6,6 +6,20 @@ from layers.sampler import Sampler
 from core.kv_cache import KVCachePool
 from core.common import ForwardBatch
 from layers.attention import attention_kv_cache, AttentionMetadata
+import os
+
+_STR_DTYPE_TO_TORCH_DTYPE = {
+    "half": torch.float16,
+    "float16": torch.float16,
+    "float": torch.float32,
+    "float32": torch.float32,
+    "bfloat16": torch.bfloat16,
+}
+
+def set_cuda_arch():
+    capability = torch.cuda.get_device_capability()
+    arch = f"{capability[0]}.{capability[1]}"
+    os.environ["TORCH_CUDA_ARCH_LIST"] = f"{arch}{'+PTX' if arch == '9.0' else ''}"
 
 class ModelRunner:
     def __init__(
@@ -22,6 +36,8 @@ class ModelRunner:
         self.device = device
 
         self.kv_cache_size = kv_cache_size
+        
+        set_cuda_arch()
     
     def load_model(self):
         
@@ -44,22 +60,32 @@ class ModelRunner:
         
         print(f"Rank {self.rank} loading model {self.model_path} with type {ModelClass.__name__}.")
         
+        torch_default_dtype = torch.get_default_dtype()
+        self.dtype = _STR_DTYPE_TO_TORCH_DTYPE[self.hf_config.torch_dtype]
+        torch.set_default_dtype(self.dtype)
+
         self.model = ModelClass(self.hf_config)
         self.model.to(self.device)
 
         self.sampler = Sampler()
         
         load_model(self.model, self.model_path)
+        
+        torch.set_default_dtype(torch_default_dtype)
 
         self.num_layers = self.hf_config.num_hidden_layers
         self.num_heads = self.hf_config.num_attention_heads
         self.num_kv_heads = self.hf_config.num_key_value_heads
-        self.head_dim = self.hf_config.hidden_size // self.hf_config.num_attention_heads
+        self.head_dim = getattr(
+            self.hf_config,
+            "head_dim",
+            self.hf_config.hidden_size // self.hf_config.num_attention_heads
+        )
         self.start_layer = self.model.model.start_layer
         self.end_layer = self.model.model.end_layer
 
         self.kv_cache = KVCachePool(
-            dtype=self.hf_config.torch_dtype, # type: ignore
+            dtype=self.dtype,
             device=self.device,
             num_tokens=self.kv_cache_size,
             num_layers=self.num_layers,
@@ -86,6 +112,8 @@ class ModelRunner:
         )
     
     def prepare_sampling_params(self, batch: ForwardBatch):
+        vocab_size = self.hf_config.vocab_size
+        
         temperatures = []
         min_ps = []
         top_ps = []
@@ -94,7 +122,12 @@ class ModelRunner:
             temperatures.append(seq.sampling_params.temperature)
             min_ps.append(seq.sampling_params.min_p)
             top_ps.append(seq.sampling_params.top_p)
-            top_ks.append(seq.sampling_params.top_k)
+            top_k = seq.sampling_params.top_k
+            if top_k == -1:
+                top_k = vocab_size
+            else:
+                top_k = min(top_k, vocab_size)
+            top_ks.append(top_k)
         
         tensor_temperatures = torch.tensor(temperatures, dtype=torch.float, device=self.device)
         tensor_min_ps = torch.tensor(min_ps, dtype=torch.float, device=self.device)
@@ -112,7 +145,7 @@ class ModelRunner:
         last_indices = []
         cu_seq_len = 0
         for seq in batch.seqs:
-            cu_seq_len += len(seq.token_ids)
+            cu_seq_len += len(seq.token_ids) - seq.cached_kv_len
             last_indices.append(cu_seq_len - 1)
         return hidden_states[..., last_indices, :]
 
@@ -125,9 +158,12 @@ class ModelRunner:
         input_ids, positions = self.prepare_input(batch)
         
         attention_metadata = AttentionMetadata.build(
-            forward_mode=batch.foward_mode,
-            kv_cache=self.kv_cache,
             batch=batch,
+            kv_cache=self.kv_cache,
+            num_qo_heads=self.num_heads,
+            num_kv_heads=self.num_kv_heads,
+            head_dim=self.head_dim,
+            dtype=self.dtype,
             device=self.device,
         )
 

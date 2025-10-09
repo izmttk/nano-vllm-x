@@ -66,7 +66,7 @@ class Scheduler:
             self.running.append(seq)
         if batch:
             return ForwardBatch(
-                foward_mode=ForwardMode.PREFILL,
+                forward_mode=ForwardMode.PREFILL,
                 num_seqs=len(batch),
                 seqs=batch,
                 max_bs=self.max_bs
@@ -96,7 +96,7 @@ class Scheduler:
         self.running.extendleft(reversed(batch))
         if batch:
             return ForwardBatch(
-                foward_mode=ForwardMode.DECODE,
+                forward_mode=ForwardMode.DECODE,
                 num_seqs=len(batch),
                 seqs=batch,
                 max_bs=self.max_bs
