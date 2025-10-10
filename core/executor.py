@@ -87,11 +87,9 @@ class Executor:
         
         future = Future()
         self.pending[request_id] = future
-        print(f"Executor sending request {request_id} for method {method} with args {args} and kwargs {kwargs}")
         for worker in self.workers:
             worker.send_request(request_id, request)
         return future.result()
 
     def execute_model(self, batch: ForwardBatch):
-        print("Executor is executing the model...")
         return self.execute("execute_model", batch=batch)

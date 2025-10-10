@@ -30,12 +30,12 @@ class KVCachePool:
         self.create_cache_pool()
 
     def create_cache_pool(self):
-        self.k_cache = torch.zeros(
+        self.k_cache = torch.empty(
             (self.num_layers, self.num_tokens, self.num_heads, self.head_dim),
             dtype=self.dtype,
             device=self.device,
         )
-        self.v_cache = torch.zeros(
+        self.v_cache = torch.empty(
             (self.num_layers, self.num_tokens, self.num_heads, self.head_dim),
             dtype=self.dtype,
             device=self.device,
@@ -81,13 +81,14 @@ class RadixTreeNode:
     def __init__(
         self,
         # child dict 的 key 等于每个子节点 key 的开头 token
-        children: dict[int, "RadixTreeNode"] = {},
+        children: Optional[dict[int, "RadixTreeNode"]] = None,
         parent: Optional["RadixTreeNode"] = None,
         key: tuple[int, ...] = tuple(),
         value: tuple[int, ...] = tuple(),
         ref_count: int = 0
     ):
-        self.children = children
+        # 避免可变默认参数导致多个节点共享 children 字典
+        self.children: dict[int, RadixTreeNode] = children if children is not None else {}
         self.parent = parent
         self.key = key
         self.value = value

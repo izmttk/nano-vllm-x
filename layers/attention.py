@@ -95,13 +95,15 @@ class AttentionMetadata:
                 head_dim_vo=head_dim,
                 page_size=page_size,
                 causal=True,
-                q_data_type=dtype
+                q_data_type=dtype,
+                kv_data_type=dtype
             )
         elif batch.forward_mode == ForwardMode.DECODE:
             decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
                 workspace_buffer,
                 "NHD",
                 use_tensor_cores=False,
+                backend="auto",
             )
             decode_wrapper.plan(
                 indptr=paged_kv_indptr,
@@ -111,12 +113,13 @@ class AttentionMetadata:
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
                 page_size=page_size,
-                q_data_type=dtype
+                q_data_type=dtype,
+                kv_data_type=dtype
             )
         
         output_kv_indices = torch.cat(
             [torch.tensor(
-                seq.kv_indices[-(len(seq.kv_indices) - seq.cached_kv_len):],
+                seq.kv_indices[seq.cached_kv_len:],
                 dtype=torch.long,
                 device=device
             ) for seq in batch.seqs],
@@ -190,22 +193,25 @@ class Attention(nn.Module):
                     v.view(-1, self.num_kv_heads, self.head_dim)
                 )
 
+        q = q.view(-1, self.num_heads, self.head_dim)
+        k_cache, v_cache = self.attention_metadata.kv_cache.get_kv_cache(self.layer_id)
+        k_cache = k_cache.view(-1, 1, self.num_kv_heads, self.head_dim)
+        v_cache = v_cache.view(-1, 1, self.num_kv_heads, self.head_dim)
+
         # Call the wrapped function
         if self.attention_metadata.forward_mode == ForwardMode.PREFILL:
             assert self.attention_metadata.prefill_wrapper is not None
-            o = self.attention_metadata.prefill_wrapper.forward(
-                q.view(-1, self.num_heads, self.head_dim),
-                self.attention_metadata.kv_cache.get_kv_cache(self.layer_id),
-                causal=True
+            self.attention_metadata.prefill_wrapper._sm_scale = self.scaling
+            o = self.attention_metadata.prefill_wrapper.run(
+                q, (k_cache, v_cache)
             )
         elif self.attention_metadata.forward_mode == ForwardMode.DECODE:
             assert self.attention_metadata.decode_wrapper is not None
-            o = self.attention_metadata.decode_wrapper.forward(
-                q.view(-1, self.num_heads, self.head_dim),
-                self.attention_metadata.kv_cache.get_kv_cache(self.layer_id)
+            self.attention_metadata.decode_wrapper._sm_scale = self.scaling
+            o = self.attention_metadata.decode_wrapper.run(
+                q, (k_cache, v_cache)
             )
         else:
             raise NotImplementedError
-
 
         return o.view(-1, self.num_heads * self.head_dim)

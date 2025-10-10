@@ -147,4 +147,5 @@ class ParallelLMHead(VocabParallelEmbedding):
     def forward(self, x: torch.Tensor):
         logits = F.linear(x, self.weight, self.bias)
         logits = tensor_model_parallel_all_gather(logits)
+        logits = logits[:, : self.num_embeddings]
         return logits

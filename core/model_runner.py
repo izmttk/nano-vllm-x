@@ -153,7 +153,6 @@ class ModelRunner:
     def execute_model(self, batch: ForwardBatch) -> list[int]:
         assert hasattr(self, 'model') and hasattr(self, 'sampler'), \
             "Model and sampler must be loaded before execution."
-        print(f"Rank {self.rank} executing model {self.model_path}.")
 
         input_ids, positions = self.prepare_input(batch)
         
