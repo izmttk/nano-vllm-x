@@ -1,4 +1,5 @@
 from core.executor import Executor
+from core.common import Sequence, SequenceStatus, ForwardBatch, ForwardMode, SamplingParams
 from transformers import AutoConfig, AutoTokenizer
 import multiprocessing as mp
 
@@ -19,6 +20,7 @@ def executor_process(
 
     executor = Executor(
         model=model,
+        kv_cache_size=1024,
         tp_size=tp_size,
         pp_size=pp_size,
         device_ids=device_ids,
@@ -26,9 +28,28 @@ def executor_process(
     )
     print(f"Executor process started with TP size {tp_size}, PP size {pp_size}, and device IDs {device_ids}.")
     
-    output_ids = executor.execute_model(input_ids)
+    
+    seq = Sequence(
+        seq_id=1,
+        token_ids=input_ids.tolist(),
+        num_tokens=len(input_ids),
+        prompt_len=len(input_ids),
+        kv_indices=list(range(len(input_ids))),
+        status=SequenceStatus.RUNNING,
+        sampling_params=SamplingParams(
+            top_k=1,
+        )
+    )
+    batch = ForwardBatch(
+        forward_mode=ForwardMode.PREFILL,
+        seqs=[seq],
+        num_seqs=1,
+        max_bs=1,
+    )
+    
+    output_ids = executor.execute_model(batch)
     print(output_ids)
-    print(tokenizer.decode(output_ids))
+    print(tokenizer.batch_decode(output_ids))
     
     executor.shutdown()
     print("All finished.")
