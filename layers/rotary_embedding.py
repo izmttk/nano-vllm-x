@@ -16,8 +16,7 @@ def _apply_rotary_emb(
     cos = cos.unsqueeze(-2).to(x.dtype)
     sin = sin.unsqueeze(-2).to(x.dtype)
 
-    x1 = x[..., ::2]
-    x2 = x[..., 1::2]
+    x1, x2 = torch.chunk(x, 2, dim=-1)
 
     o1 = x1 * cos - x2 * sin
     o2 = x2 * cos + x1 * sin
