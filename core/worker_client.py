@@ -13,6 +13,7 @@ class WorkerClient:
         pp_rank: int,
         pp_size: int,
         nccl_port: int = 29500,
+        is_driver_worker = False,
     ):
         self.model = model
         self.kv_cache_size = kv_cache_size
@@ -26,6 +27,7 @@ class WorkerClient:
 
         self.nccl_port = nccl_port
         
+        self.is_driver_worker = is_driver_worker
         self.methods = {}  # 用于存储注册的方法
         
         
@@ -67,10 +69,12 @@ class WorkerClient:
             request_id, data = self.input_queue.get()  # 等待输入
             method_name = data.get('method')
             if method_name == "shutdown":
-                self.output_queue.put_nowait((request_id, "shutdown"))
+                if self.is_driver_worker:
+                    self.output_queue.put_nowait((request_id, "shutdown"))
                 break
             response = self.handle_request(data)  # 处理请求
-            self.output_queue.put_nowait((request_id, response))
+            if self.is_driver_worker:
+                self.output_queue.put_nowait((request_id, response))
         worker.destroy_environment()
         print(f"Worker {self.rank} has shut down.")
 

@@ -32,6 +32,9 @@ class Executor:
         self.driver_worker: WorkerClient
         for pp_rank in range(pp_size):
             for tp_rank in range(tp_size):
+                is_driver_worker = False
+                if tp_rank == 0 and pp_rank == pp_size - 1:
+                    is_driver_worker = True
                 worker = WorkerClient(
                     model=model,
                     kv_cache_size=kv_cache_size,
@@ -40,10 +43,11 @@ class Executor:
                     pp_rank=pp_rank,
                     pp_size=pp_size,
                     nccl_port=self.nccl_port,
+                    is_driver_worker=is_driver_worker
                 )
-                self.workers.append(worker)
-                if tp_rank == 0 and pp_rank == pp_size - 1:
+                if is_driver_worker:
                     self.driver_worker = worker
+                self.workers.append(worker)
 
         self.collect_response_thread = threading.Thread(
             target=self.collect_response

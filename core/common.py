@@ -12,7 +12,8 @@ class SamplingParams:
     top_k: int = -1
     min_p: float = 0.0
 
-    max_new_tokens: int = 128
+    max_tokens: int | None = None
+    max_new_tokens: int | None = None
     ignore_eos: bool = False
     eos_token_id: int = -1
 

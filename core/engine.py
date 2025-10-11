@@ -91,7 +91,9 @@ class Engine:
         if seq.token_ids[-1] == seq.sampling_params.eos_token_id and not seq.sampling_params.ignore_eos:
             return True
         # Check for max tokens
-        if seq.num_tokens >= seq.prompt_len + seq.sampling_params.max_new_tokens:
+        if seq.sampling_params.max_tokens and seq.num_tokens >= seq.sampling_params.max_tokens:
+            return True
+        if seq.sampling_params.max_new_tokens and seq.num_tokens >= seq.prompt_len + seq.sampling_params.max_new_tokens:
             return True
         return False
 
