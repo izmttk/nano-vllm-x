@@ -76,30 +76,23 @@ class WorkerClient:
 
     def handle_request(self, request):
         """处理单个请求"""
-        try:
-            method_name = request['method']
-            args = request.get('args', [])
-            kwargs = request.get('kwargs', {})
-            # 查找并调用注册的方法
-            if method_name in self.methods:
-                method = self.methods[method_name]
-                # 执行方法
-                result = method(*args, **kwargs)
-                
-                # 返回成功结果
-                return {
-                    'status': 'success',
-                    'result': result
-                }
-            else:
-                # 方法不存在
-                return {
-                    'status': 'error',
-                    'error': f"Method '{method_name}' not found"
-                }
-        except Exception as e:
-            # 处理异常
+        method_name = request['method']
+        args = request.get('args', [])
+        kwargs = request.get('kwargs', {})
+        # 查找并调用注册的方法
+        if method_name in self.methods:
+            method = self.methods[method_name]
+            # 执行方法
+            result = method(*args, **kwargs)
+            
+            # 返回成功结果
+            return {
+                'status': 'success',
+                'result': result
+            }
+        else:
+            # 方法不存在
             return {
                 'status': 'error',
-                'error': str(e)
+                'error': f"Method '{method_name}' not found"
             }
