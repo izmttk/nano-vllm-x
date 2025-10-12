@@ -29,16 +29,16 @@ class LLM:
     def __init__(
         self,
         model: str,
-        kv_cache_size: int,
-        max_bs: int,
-        tp_size: int,
-        pp_size: int,
+        gpu_memory_utilization: float = 0.9,
+        max_bs: int = 50,
+        tp_size: int = 1,
+        pp_size: int = 1,
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
     ):
         self.engine = EngineClient(
             model,
-            kv_cache_size,
+            gpu_memory_utilization,
             max_bs,
             tp_size,
             pp_size,

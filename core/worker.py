@@ -15,7 +15,6 @@ class Worker:
     def __init__(
         self,
         model: str,
-        kv_cache_size: int,
         
         tp_rank: int,
         tp_size: int,
@@ -24,7 +23,6 @@ class Worker:
         nccl_port: int,
     ):
         self.model = model
-        self.kv_cache_size = kv_cache_size
         
         self.tp_rank = tp_rank
         self.pp_rank = pp_rank
@@ -59,7 +57,6 @@ class Worker:
             model=self.model,
             rank=self.rank,
             device=self.device,
-            kv_cache_size=self.kv_cache_size,
         )
         print(f"Worker {self.rank} started with TP rank {self.tp_rank}, PP rank {self.pp_rank}.")
 
@@ -73,3 +70,9 @@ class Worker:
 
     def execute_model(self, batch: ForwardBatch):
         return self.model_runner.execute_model(batch)
+    
+    def initialize_kv_cache(self, kv_cache_size: int):
+        self.model_runner.initialize_kv_cache(kv_cache_size)
+    
+    def profile_kv_cache_size(self, gpu_memory_utilization: float):
+        return self.model_runner.profile_kv_cache_size(gpu_memory_utilization)

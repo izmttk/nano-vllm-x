@@ -5,7 +5,6 @@ import heapq
 import time
 
 from core.common import Sequence, SequenceStatus
-from collections import abc
 
 # KVCachePool should be instantiated in each worker
 class KVCachePool:
@@ -15,10 +14,8 @@ class KVCachePool:
         device: torch.device,
         num_tokens: int,
         num_layers: int,
-        # num_heads 可以为 int，所有 layer 具有相同的 kv head 数量
-        # num_heads 也可以为 int 类型的可遍历序列，分别为不同层设定不同  kv head 数量
-        num_heads: int | abc.Sequence[int],
-        head_dim: int | abc.Sequence[int],
+        num_heads: int,
+        head_dim: int,
         start_layer: Optional[int] = None,
         end_layer: Optional[int] = None,
     ):
@@ -26,37 +23,22 @@ class KVCachePool:
         self.device = device
         self.num_tokens = num_tokens
         self.num_layers = num_layers
-
-        if type(num_heads) == int:
-            self.num_heads = [num_heads] * num_layers
-        else:
-            assert isinstance(num_heads, abc.Sequence) and len(num_heads) == num_layers
-            self.num_heads = list(num_heads)
-        
-        if type(head_dim) == int:
-            self.head_dim = [head_dim] * num_layers
-        else:
-            assert isinstance(head_dim, abc.Sequence) and len(head_dim) == num_layers
-            self.head_dim = list(head_dim)
-
+        self.num_heads = num_heads
+        self.head_dim = head_dim
         self.start_layer = start_layer or 0
         self.end_layer = end_layer or num_layers - 1
         self.create_cache_pool()
 
     def create_cache_pool(self):
-        self.k_cache = tuple(
-            torch.empty(
-                (self.num_tokens, self.num_heads[i], self.head_dim[i]),
-                dtype=self.dtype,
-                device=self.device,
-            ) for i in range(self.num_layers)
+        self.k_cache = torch.empty(
+            (self.num_layers, self.num_tokens, self.num_heads, self.head_dim),
+            dtype=self.dtype,
+            device=self.device,
         )
-        self.v_cache = tuple(
-            torch.empty(
-                (self.num_tokens, self.num_heads[i], self.head_dim[i]),
-                dtype=self.dtype,
-                device=self.device,
-            ) for i in range(self.num_layers)
+        self.v_cache = torch.empty(
+            (self.num_layers, self.num_tokens, self.num_heads, self.head_dim),
+            dtype=self.dtype,
+            device=self.device,
         )
 
     def get_kv_cache(self, layer: int, index: Optional[torch.Tensor] = None):
@@ -64,13 +46,13 @@ class KVCachePool:
             k_cache = self.k_cache[layer - self.start_layer]
             v_cache = self.v_cache[layer - self.start_layer]
         else:
-            k_cache = self.k_cache[layer - self.start_layer][index]
-            v_cache = self.v_cache[layer - self.start_layer][index]
+            k_cache = self.k_cache[layer - self.start_layer, index]
+            v_cache = self.v_cache[layer - self.start_layer, index]
         return k_cache, v_cache
     
     def set_kv_cache(self, layer: int, index: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor):
-        self.k_cache[layer - self.start_layer][index] = k_cache
-        self.v_cache[layer - self.start_layer][index] = v_cache
+        self.k_cache[layer - self.start_layer, index] = k_cache
+        self.v_cache[layer - self.start_layer, index] = v_cache
 
 
 class KVCacheAllocator:

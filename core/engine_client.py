@@ -8,7 +8,7 @@ class EngineClient:
     def __init__(
         self,
         model: str,
-        kv_cache_size: int,
+        gpu_memory_utilization: float,
         max_bs: int,
         tp_size: int,
         pp_size: int,
@@ -16,7 +16,7 @@ class EngineClient:
         device_ids: list[int] | None = None,
     ):
         self.model = model
-        self.kv_cache_size = kv_cache_size
+        self.gpu_memory_utilization = gpu_memory_utilization
         self.max_bs = max_bs
         self.tp_size = tp_size
         self.pp_size = pp_size
@@ -40,7 +40,7 @@ class EngineClient:
     def engine_main_loop(self):
         engine = Engine(
             model=self.model,
-            kv_cache_size=self.kv_cache_size,
+            gpu_memory_utilization=self.gpu_memory_utilization,
             max_bs=self.max_bs,
             tp_size=self.tp_size,
             pp_size=self.pp_size,

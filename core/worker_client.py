@@ -7,7 +7,6 @@ class WorkerClient:
     def __init__(
         self,
         model: str,
-        kv_cache_size: int,
         tp_rank: int,
         tp_size: int,
         pp_rank: int,
@@ -16,7 +15,6 @@ class WorkerClient:
         is_driver_worker = False,
     ):
         self.model = model
-        self.kv_cache_size = kv_cache_size
         
         self.tp_rank = tp_rank
         self.tp_size = tp_size
@@ -53,7 +51,6 @@ class WorkerClient:
     def worker_main_loop(self):
         worker = Worker(
             model=self.model,
-            kv_cache_size=self.kv_cache_size,
             tp_rank=self.tp_rank,
             tp_size=self.tp_size,
             pp_rank=self.pp_rank,
@@ -64,6 +61,8 @@ class WorkerClient:
         worker.load_model()
         
         self.methods["execute_model"] = worker.execute_model
+        self.methods["initialize_kv_cache"] = worker.initialize_kv_cache
+        self.methods["profile_kv_cache_size"] = worker.profile_kv_cache_size
         
         while True:
             request_id, data = self.input_queue.get()  # 等待输入

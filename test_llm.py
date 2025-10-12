@@ -5,7 +5,7 @@ async def main():
     print("Initializing LLM...")
     llm = LLM(
         model="../Qwen3-0.6B",
-        kv_cache_size=1024,
+        gpu_memory_utilization=0.9,
         max_bs=4,
         tp_size=1,
         pp_size=1,
@@ -19,9 +19,9 @@ async def main():
         prompt,
         SamplingParams(
             max_new_tokens=50,
-            temperature=0.8,
-            top_p=0.9,
-            top_k=50,
+            temperature=0.6,
+            top_p=0.95,
+            top_k=20,
         ),
     ):
         print(token, end='', flush=True)

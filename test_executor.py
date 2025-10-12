@@ -20,14 +20,14 @@ def executor_process(
 
     executor = Executor(
         model=model,
-        kv_cache_size=1024,
         tp_size=tp_size,
         pp_size=pp_size,
         device_ids=device_ids,
         nccl_port=nccl_port,
     )
     print(f"Executor process started with TP size {tp_size}, PP size {pp_size}, and device IDs {device_ids}.")
-    
+    kv_cache_size = executor.profile_kv_cache_size(gpu_memory_utilization=0.9)
+    executor.initialize_kv_cache(kv_cache_size)
     
     seq = Sequence(
         seq_id=1,

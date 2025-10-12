@@ -17,7 +17,7 @@ class Engine:
     def __init__(
         self,
         model: str,
-        kv_cache_size: int,
+        gpu_memory_utilization: float,
         max_bs: int,
         tp_size: int,
         pp_size: int,
@@ -26,16 +26,21 @@ class Engine:
     ):
         self.model_executor = Executor(
             model=model,
-            kv_cache_size=kv_cache_size,
             tp_size=tp_size,
             pp_size=pp_size,
             nccl_port=nccl_port,
             device_ids=device_ids,
         )
+        
+        kv_cache_size = self.model_executor.profile_kv_cache_size(gpu_memory_utilization)
+        print(f"Max num tokens in kv cache: {kv_cache_size}")
+        self.model_executor.initialize_kv_cache(kv_cache_size)
+
         self.scheduler = Scheduler(
             kv_cache_size=kv_cache_size,
             max_bs=max_bs
         )
+        
 
     def add_sequence(
         self,

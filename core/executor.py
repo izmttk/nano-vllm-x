@@ -11,13 +11,11 @@ class Executor:
     def __init__(
         self,
         model: str,
-        kv_cache_size: int,
         tp_size: int,
         pp_size: int,
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
     ):
-        self.kv_cache_size = kv_cache_size
         self.tp_size = tp_size
         self.pp_size = pp_size
         self.nccl_port = nccl_port
@@ -37,7 +35,6 @@ class Executor:
                     is_driver_worker = True
                 worker = WorkerClient(
                     model=model,
-                    kv_cache_size=kv_cache_size,
                     tp_rank=tp_rank,
                     tp_size=tp_size,
                     pp_rank=pp_rank,
@@ -95,5 +92,11 @@ class Executor:
             worker.send_request(request_id, request)
         return future.result()
 
-    def execute_model(self, batch: ForwardBatch):
+    def execute_model(self, batch: ForwardBatch) -> list[int]:
         return self.execute("execute_model", batch=batch)
+    
+    def initialize_kv_cache(self, kv_cache_size: int):
+        self.execute("initialize_kv_cache", kv_cache_size)
+
+    def profile_kv_cache_size(self, gpu_memory_utilization: float) -> int:
+        return self.execute("profile_kv_cache_size", gpu_memory_utilization)

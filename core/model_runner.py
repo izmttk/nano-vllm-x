@@ -7,6 +7,7 @@ from core.kv_cache import KVCachePool
 from core.common import ForwardBatch
 from distributed.parallel_state import get_tp_group, get_pp_group
 from distributed.utils import get_pp_indices
+import torch.distributed as dist
 from layers.attention import attention_kv_cache, AttentionMetadata
 import os
 
@@ -59,16 +60,10 @@ class ModelRunner:
         model: str,
         rank: int,
         device: torch.device,
-
-        # KV cache parameters
-        kv_cache_size: int,
     ):
         self.model_path = model
         self.rank = rank
         self.device = device
-
-        self.kv_cache_size = kv_cache_size
-        
         set_cuda_arch()
     
     def load_model(self):
@@ -123,6 +118,8 @@ class ModelRunner:
         
         torch.set_default_dtype(torch_default_dtype)
 
+    def initialize_kv_cache(self, kv_cache_size: int):
+        self.kv_cache_size = kv_cache_size
         self.kv_cache = KVCachePool(
             dtype=self.dtype,
             device=self.device,
@@ -133,6 +130,20 @@ class ModelRunner:
             start_layer=self.start_layer,
             end_layer=self.end_layer,
         )
+
+    def profile_kv_cache_size(self, gpu_memory_utilization: float = 0.9):
+        cache_memsize_per_token = self.num_layers * self.num_kv_heads * self.head_dim * 2 * self.dtype.itemsize
+        
+        torch.cuda.empty_cache()
+        free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info(self.device)
+        
+        max_num_tokens = int(free_gpu_memory * gpu_memory_utilization) // cache_memsize_per_token
+        max_num_tokens = torch.tensor(max_num_tokens, device=self.device)
+        dist.all_reduce(max_num_tokens, op= dist.ReduceOp.MIN)
+        max_num_tokens = int(max_num_tokens.item())
+
+        torch.cuda.empty_cache()
+        return max_num_tokens
 
     def prepare_input(self, batch: ForwardBatch):
         input_ids: list[int] = []
@@ -192,6 +203,7 @@ class ModelRunner:
     def execute_model(self, batch: ForwardBatch) -> list[int]:
         assert hasattr(self, 'model') and hasattr(self, 'sampler'), \
             "Model and sampler must be loaded before execution."
+        assert hasattr(self, "kv_cache"), "KV Cache not initialized yet."
 
         input_ids, positions = self.prepare_input(batch)
         
