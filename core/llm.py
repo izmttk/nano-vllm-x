@@ -4,8 +4,7 @@ from core.common import SamplingParams
 import asyncio
 from transformers import AutoTokenizer, PreTrainedTokenizer
 import uuid
-import signal
-import weakref
+import threading
 
 def init_tokenizer(model: str) -> PreTrainedTokenizer:
     tokenizer = AutoTokenizer.from_pretrained(model, use_fast=False, trust_remote_code=True)
@@ -14,16 +13,6 @@ def init_tokenizer(model: str) -> PreTrainedTokenizer:
     if tokenizer.unk_token is None:
         tokenizer.unk_token = tokenizer.eos_token
     return tokenizer
-
-_llm_instances = weakref.WeakSet()
-
-def signal_handler(sig, frame):
-    for llm in list(_llm_instances):
-        llm.shutdown()
-    raise SystemExit()
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
 
 class LLM:
     def __init__(
@@ -47,15 +36,17 @@ class LLM:
         )
     
         self.tokenizer = init_tokenizer(model)
-        
+        self.event_loop = asyncio.get_event_loop()
+
         self.request_states: dict[int, asyncio.Queue[str | None]] = {}
-        self.output_handler_task = asyncio.create_task(self._handle_outputs())
+        self.process_output_thread = threading.Thread(target=self._process_outputs)
+        self.process_output_thread.start()
 
-        _llm_instances.add(self)
-
-    async def _handle_outputs(self):
+    def _process_outputs(self):
         while True:
             outputs = self.engine.get_output()
+            if outputs is None: # Shutdown signal
+                break
             for output in outputs:
                 seq_id = output.seq_id
                 new_token_id = output.new_token_id
@@ -63,46 +54,65 @@ class LLM:
                     q = self.request_states[seq_id]
                     token_str = self.detokenize([[new_token_id]])[0]
                     if output.is_finished:
-                        q.put_nowait(token_str)
-                        q.put_nowait(None)  # Sentinel for end of generation
+                        self.event_loop.call_soon_threadsafe(
+                            q.put_nowait, token_str
+                        )
+                        self.event_loop.call_soon_threadsafe(
+                            q.put_nowait, None  # Sentinel for end of generation
+                        )
                         del self.request_states[seq_id]
                     else:
-                        q.put_nowait(token_str)
-            # 让出控制权，避免阻塞事件循环
-            await asyncio.sleep(0)
+                        self.event_loop.call_soon_threadsafe(
+                            q.put_nowait, token_str
+                        )
 
     def tokenize(self, texts: list[str]) -> list[list[int]]:
         return self.tokenizer(texts)["input_ids"] # type: ignore
 
     def detokenize(self, token_ids: list[list[int]]) -> list[str]:
-        return self.tokenizer.batch_decode(token_ids)
+        return self.tokenizer.batch_decode(token_ids, skip_special_tokens=True)
+    
+    async def ready(self):
+        pass
     
     async def generate(
         self,
         prompts: str,
         params: SamplingParams,
     ) -> AsyncGenerator[str, None]:
-        
-        token_ids = self.tokenize([prompts])[0]
         seq_id = uuid.uuid4().int
-        q: asyncio.Queue[str | None] = asyncio.Queue()
-        
-        if params.eos_token_id == -1:
-            params.eos_token_id = self.tokenizer.eos_token_id  # type: ignore
-        
-        self.request_states[seq_id] = q
-        self.engine.add_sequence(
-            sequence_id=seq_id,
-            prompt_token_ids=token_ids,
-            sampling_params=params,
-        )
-        
-        while True:
-            token_str = await q.get()
-            if token_str is None:  # End of generation
-                break
-            yield token_str
+        try:
+            token_ids = self.tokenize([prompts])[0]
+            q: asyncio.Queue[str | None] = asyncio.Queue()
+            
+            if params.eos_token_id == -1:
+                params.eos_token_id = self.tokenizer.eos_token_id  # type: ignore
+            
+            self.request_states[seq_id] = q
+            self.engine.add_sequence(
+                sequence_id=seq_id,
+                prompt_token_ids=token_ids,
+                sampling_params=params,
+            )
+            
+            while True:
+                token_str = await q.get()
+                if token_str is None:  # End of generation
+                    break
+                yield token_str
+                
+        # If the request is disconnected by the client, the
+        # generate() task will be canceled. So, we abort the
+        # request if we end up here.
+        except asyncio.CancelledError:
+            self.abort(seq_id)
+            raise
+
+    def abort(self, seq_id: int):
+        if seq_id in self.request_states:
+            self.engine.abort_sequence(seq_id)
+            del self.request_states[seq_id]
 
     def shutdown(self):
         self.engine.shutdown()
-        self.output_handler_task.cancel()
+        self.process_output_thread.join()

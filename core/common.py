@@ -14,6 +14,7 @@ class SamplingParams:
 
     max_tokens: int | None = None
     max_new_tokens: int | None = None
+    stop: list[str] = field(default_factory=list)
     ignore_eos: bool = False
     eos_token_id: int = -1
 

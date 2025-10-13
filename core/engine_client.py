@@ -3,6 +3,7 @@ from core.engine import Engine, EngineOutput
 from core.common import SamplingParams
 import torch.multiprocessing as mp
 from utils import bind_parent_process_lifecycle
+import os
 
 class EngineClient:
     def __init__(
@@ -38,6 +39,7 @@ class EngineClient:
 
     @bind_parent_process_lifecycle
     def engine_main_loop(self):
+        os.setsid()  # 使子进程成为新会话的首进程，防止收到来自终端的信号
         engine = Engine(
             model=self.model,
             gpu_memory_utilization=self.gpu_memory_utilization,
@@ -73,6 +75,7 @@ class EngineClient:
             outputs = engine.step()
             self.output_queue.put_nowait(outputs)
 
+        self.output_queue.put_nowait(None)
         engine.shutdown()
         print(f"Engine has shut down.")
 
@@ -91,5 +94,9 @@ class EngineClient:
             (sequence_id, prompt_token_ids, sampling_params)
         )
 
-    def get_output(self) -> list[EngineOutput]:
+    def get_output(self) -> list[EngineOutput] | None:
         return self.output_queue.get()
+
+    def abort_sequence(self, sequence_id: int):
+        # TODO: need implement abort in engine
+        pass
