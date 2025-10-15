@@ -191,7 +191,7 @@ class ModelRunner:
             tensor_top_ks
         )
     
-    def prepare_last_hiden_states(self, batch: ForwardBatch, hidden_states: torch.Tensor):
+    def prepare_last_hidden_states(self, batch: ForwardBatch, hidden_states: torch.Tensor):
         last_indices = []
         cu_seq_len = 0
         for seq in batch.seqs:
@@ -220,7 +220,7 @@ class ModelRunner:
         with attention_kv_cache(self.model, attention_metadata):
             hidden_states = self.model(input_ids, positions)
 
-        hidden_states = self.prepare_last_hiden_states(batch, hidden_states)
+        hidden_states = self.prepare_last_hidden_states(batch, hidden_states)
         logits = self.model.compute_logits(hidden_states)
         
         (
