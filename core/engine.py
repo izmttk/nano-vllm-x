@@ -1,13 +1,8 @@
-from core.common import SamplingParams, Sequence
+from core.common import FinishReason, SamplingParams, Sequence, EngineOutput
 from core.executor import Executor
 from core.scheduler import Scheduler
 from dataclasses import dataclass, field
 
-@dataclass
-class EngineOutput:
-    seq_id: int
-    new_token_id: int
-    is_finished: bool
 
 class Engine:
     """
@@ -24,7 +19,9 @@ class Engine:
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
         enforce_eager: bool = False,
+        context_len: int = 2048,
     ):
+        self.context_len = context_len
         self.model_executor = Executor(
             model=model,
             max_bs=max_bs,
@@ -33,6 +30,7 @@ class Engine:
             nccl_port=nccl_port,
             device_ids=device_ids,
             enforce_eager=enforce_eager,
+            context_len=context_len,
         )
         
         kv_cache_size = self.model_executor.profile_kv_cache_size(gpu_memory_utilization)
@@ -54,12 +52,16 @@ class Engine:
         """
         Add a new sequence to the engine's scheduler.
         """
+        if len(prompt_token_ids) > self.context_len:
+            prompt_token_ids = prompt_token_ids[-self.context_len:]
+
         seq = Sequence(
             seq_id=sequence_id,
             token_ids=prompt_token_ids,
             num_tokens=len(prompt_token_ids),
             prompt_len=len(prompt_token_ids),
             sampling_params=sampling_params,
+            context_len=self.context_len,
         )
         self.scheduler.add_sequence(seq)
 
@@ -82,7 +84,7 @@ class Engine:
         for seq, new_token_id in zip(batch.seqs, output_ids):
             self.scheduler.update_sequence(seq, new_token_id)
 
-            is_finished = self._is_sequence_finished(seq)
+            is_finished, finish_reason = self._is_sequence_finished(seq)
             if is_finished:
                 self.scheduler.finish_sequence(seq)
             
@@ -90,20 +92,27 @@ class Engine:
                 seq_id=seq.seq_id,
                 new_token_id=new_token_id,
                 is_finished=is_finished,
+                finish_reason=finish_reason,
+                num_prompt_tokens=seq.prompt_len,
+                num_generated_tokens=seq.num_tokens - seq.prompt_len
             ))
-        
+
         return outputs
 
-    def _is_sequence_finished(self, seq: Sequence) -> bool:
+    def _is_sequence_finished(self, seq: Sequence) -> tuple[bool, FinishReason | None]:
         # Check for stop tokens
         if seq.token_ids[-1] == seq.sampling_params.eos_token_id and not seq.sampling_params.ignore_eos:
-            return True
+            return True, FinishReason.STOP
+        
         # Check for max tokens
         if seq.sampling_params.max_tokens and seq.num_tokens >= seq.sampling_params.max_tokens:
-            return True
+            return True, FinishReason.LENGTH
         if seq.sampling_params.max_new_tokens and seq.num_tokens >= seq.prompt_len + seq.sampling_params.max_new_tokens:
-            return True
-        return False
+            return True, FinishReason.LENGTH
+        if seq.context_len and seq.num_tokens >= seq.context_len:
+            return True, FinishReason.LENGTH
+        
+        return False, None
 
     def shutdown(self):
         self.model_executor.shutdown()

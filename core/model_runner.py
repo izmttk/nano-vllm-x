@@ -64,12 +64,14 @@ class ModelRunner:
         rank: int,
         device: torch.device,
         enforce_eager: bool = False,
+        context_len: int = 2048,
     ):
         self.model_path = model
         self.max_bs = max_bs
         self.rank = rank
         self.device = device
         self.enforce_eager = enforce_eager
+        self.context_len = context_len
         set_cuda_arch()
     
     def load_model(self):
@@ -311,14 +313,14 @@ class ModelRunner:
         self.attn_backend.prepare_for_cuda_graph_capture(
             graph=self.cuda_graph,
             max_bs=self.max_bs,
-            context_len=2048,
+            context_len=self.context_len,
         )
         
         for bs in reversed(graph_bs):
             attention_metadata = self.attn_backend.build_metadata_for_cuda_graph_capture(
                 graph=self.cuda_graph,
                 bs=bs,
-                context_len=2048,
+                context_len=self.context_len,
             )
 
             with attention_kv_cache(self.model, attention_metadata):

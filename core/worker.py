@@ -22,6 +22,7 @@ class Worker:
         pp_size: int,
         nccl_port: int,
         enforce_eager: bool = False,
+        context_len: int = 2048,
     ):
         self.model = model
         self.max_bs = max_bs
@@ -32,6 +33,7 @@ class Worker:
         self.pp_size = pp_size
         self.nccl_port = nccl_port
         self.enforce_eager = enforce_eager
+        self.context_len = context_len
         
         self.rank = pp_rank * tp_size + tp_rank
         self.world_size = pp_size * tp_size
@@ -62,6 +64,7 @@ class Worker:
             rank=self.rank,
             device=self.device,
             enforce_eager=self.enforce_eager,
+            context_len=self.context_len,
         )
         print(f"Worker {self.rank} started with TP rank {self.tp_rank}, PP rank {self.pp_rank}.")
 

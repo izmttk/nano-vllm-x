@@ -16,6 +16,7 @@ class EngineClient:
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
         enforce_eager: bool = False,
+        context_len: int = 2048,
     ):
         self.model = model
         self.gpu_memory_utilization = gpu_memory_utilization
@@ -25,6 +26,7 @@ class EngineClient:
         self.nccl_port = nccl_port
         self.device_ids = device_ids
         self.enforce_eager = enforce_eager
+        self.context_len = context_len
         
         self.mp_ctx = mp.get_context('spawn')
         self.input_queue = self.mp_ctx.Queue()
@@ -51,6 +53,7 @@ class EngineClient:
             nccl_port=self.nccl_port,
             device_ids=self.device_ids,
             enforce_eager=self.enforce_eager,
+            context_len=self.context_len,
         )
         while True:
             is_shutdown = False

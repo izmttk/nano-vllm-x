@@ -15,6 +15,7 @@ class WorkerClient:
         nccl_port: int = 29500,
         is_driver_worker = False,
         enforce_eager: bool = False,
+        context_len: int = 2048,
     ):
         self.model = model
         self.max_bs = max_bs
@@ -30,6 +31,7 @@ class WorkerClient:
         
         self.is_driver_worker = is_driver_worker
         self.enforce_eager = enforce_eager
+        self.context_len = context_len
         self.methods = {}  # 用于存储注册的方法
         
         
@@ -62,6 +64,7 @@ class WorkerClient:
             pp_size=self.pp_size,
             nccl_port=self.nccl_port,
             enforce_eager=self.enforce_eager,
+            context_len=self.context_len,
         )
         worker.init_environment()
         worker.load_model()

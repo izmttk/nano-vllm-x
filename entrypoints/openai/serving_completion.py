@@ -55,19 +55,20 @@ class OpenAIServingCompletion(OpenAIServing):
                 ),
                 media_type="text/event-stream",
             )
-
-        text_outputs = await self._generate_full(prompt, sampling_params)
+        (
+            text_outputs,
+            finish_reason,
+            num_prompt_tokens,
+            num_generated_tokens,
+        ) = await self._generate_full(prompt, sampling_params)
+        assert finish_reason == "stop" or finish_reason == "length"
 
         choices = [
             CompletionResponseChoice(
-                index=i, text=text_outputs[i], logprobs=None, finish_reason="stop"
+                index=i, text=text_outputs[i], logprobs=None, finish_reason=finish_reason
             )
             for i in range(sampling_params.n)
         ]
-        num_prompt_tokens = len(self.tokenizer.tokenize(prompt))
-        num_generated_tokens = sum(
-            len(self.tokenizer.tokenize(output)) for output in text_outputs
-        )
         usage = UsageInfo(
             prompt_tokens=num_prompt_tokens,
             completion_tokens=num_generated_tokens,
@@ -103,11 +104,14 @@ class OpenAIServingCompletion(OpenAIServing):
             data = chunk.model_dump_json(exclude_unset=True)
             yield f"data: {data}\n\n"
 
+        finish_reason = None
         async for output in self.engine.generate(prompt, sampling_params):
-            print(output)
             for i in range(sampling_params.n):
+                text = output.token_str
+                if output.is_finished:
+                    finish_reason = output.finish_reason
                 choice_data = CompletionResponseStreamChoice(
-                    index=i, text=output, logprobs=None, finish_reason=None
+                    index=i, text=text, logprobs=None, finish_reason=None
                 )
                 chunk = CompletionStreamResponse(
                     id=request_id,
@@ -118,10 +122,14 @@ class OpenAIServingCompletion(OpenAIServing):
                 )
                 data = chunk.model_dump_json(exclude_unset=True)
                 yield f"data: {data}\n\n"
+                
+        assert finish_reason is not None
+        finish_reason = finish_reason.name.lower()
+        assert finish_reason == "stop" or finish_reason == "length"
 
         for i in range(sampling_params.n):
             choice_data = CompletionResponseStreamChoice(
-                index=i, text="", logprobs=None, finish_reason="stop"
+                index=i, text="", logprobs=None, finish_reason=finish_reason
             )
             chunk = CompletionStreamResponse(
                 id=request_id,

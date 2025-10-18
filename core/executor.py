@@ -17,6 +17,7 @@ class Executor:
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
         enforce_eager: bool = False,
+        context_len: int = 2048,
     ):
         self.tp_size = tp_size
         self.pp_size = pp_size
@@ -45,6 +46,7 @@ class Executor:
                     nccl_port=self.nccl_port,
                     is_driver_worker=is_driver_worker,
                     enforce_eager=enforce_eager,
+                    context_len=context_len,
                 )
                 if is_driver_worker:
                     self.driver_worker = worker

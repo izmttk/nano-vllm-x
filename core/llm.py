@@ -1,6 +1,6 @@
 from typing import AsyncGenerator
 from core.engine_client import EngineClient
-from core.common import SamplingParams
+from core.common import SamplingParams, GenerateOutput
 import asyncio
 from transformers import AutoTokenizer, PreTrainedTokenizer
 import uuid
@@ -24,6 +24,7 @@ class LLM:
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
         enforce_eager: bool = False,
+        context_len: int = 2048,
     ):
         self.engine = EngineClient(
             model,
@@ -34,12 +35,13 @@ class LLM:
             nccl_port,
             device_ids,
             enforce_eager,
+            context_len,
         )
     
         self.tokenizer = init_tokenizer(model)
         self.event_loop = asyncio.get_event_loop()
 
-        self.request_states: dict[int, asyncio.Queue[str | None]] = {}
+        self.request_states: dict[int, asyncio.Queue[GenerateOutput | None]] = {}
         self.process_outputs_task = asyncio.create_task(self._process_outputs_async())
 
     async def _process_outputs_async(self):
@@ -54,11 +56,23 @@ class LLM:
                     q = self.request_states[seq_id]
                     token_str = self.detokenize([[new_token_id]])[0]
                     if output.is_finished:
-                        q.put_nowait(token_str)
+                        q.put_nowait(GenerateOutput(
+                            token_str=token_str,
+                            is_finished=True,
+                            finish_reason=output.finish_reason,
+                            num_prompt_tokens=output.num_prompt_tokens,
+                            num_generated_tokens=output.num_generated_tokens,
+                        ))
                         q.put_nowait(None)  # Sentinel for end of generation
                         del self.request_states[seq_id]
                     else:
-                        q.put_nowait(token_str)
+                        q.put_nowait(GenerateOutput(
+                            token_str=token_str,
+                            is_finished=False,
+                            finish_reason=None,
+                            num_prompt_tokens=0,
+                            num_generated_tokens=0
+                        ))
 
     def tokenize(self, texts: list[str]) -> list[list[int]]:
         return self.tokenizer(texts)["input_ids"] # type: ignore
@@ -73,14 +87,14 @@ class LLM:
         self,
         prompts: str | list[int],
         params: SamplingParams,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[GenerateOutput, None]:
         seq_id = uuid.uuid4().int
         try:
             if isinstance(prompts, list):
                 token_ids = prompts
             else:
                 token_ids = self.tokenize([prompts])[0]
-            q: asyncio.Queue[str | None] = asyncio.Queue()
+            q: asyncio.Queue[GenerateOutput | None] = asyncio.Queue()
             
             if params.eos_token_id == -1:
                 params.eos_token_id = self.tokenizer.eos_token_id  # type: ignore
@@ -93,10 +107,10 @@ class LLM:
             )
             
             while True:
-                token_str = await q.get()
-                if token_str is None:  # End of generation
+                output = await q.get()
+                if output is None:  # End of generation
                     break
-                yield token_str
+                yield output
                 
         # If the request is disconnected by the client, the
         # generate() task will be canceled. So, we abort the

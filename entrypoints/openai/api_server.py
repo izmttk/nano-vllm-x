@@ -38,6 +38,7 @@ async def lifespan(app: fastapi.FastAPI):
         nccl_port=args.nccl_port,
         device_ids=device_ids,
         enforce_eager=args.enforce_eager,
+        context_len=args.context_len,
     )
 
     app.state.model_name = args.model
@@ -118,6 +119,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Comma-separated list of GPU device IDs to use",
+    )
+    parser.add_argument(
+        "--context-len",
+        type=int,
+        default=2048,
+        help="Max context length for CUDA graph capture",
     )
     parser.add_argument(
         "--enforce-eager",

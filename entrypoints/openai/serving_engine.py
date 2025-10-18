@@ -21,10 +21,18 @@ class OpenAIServing:
 
     async def _generate_full(self, prompt: str, sampling_params: SamplingParams):
         text_outputs = ["" for _ in range(sampling_params.n)]
+        finish_reason = None
+        num_prompt_tokens = 0
+        num_generated_tokens = 0
         async for res in self.engine.generate(prompt, sampling_params):
             for i in range(sampling_params.n):
-                text_outputs[i] += res
-        return text_outputs
+                token_str = res.token_str
+                text_outputs[i] += token_str
+            if res.is_finished:
+                finish_reason = res.finish_reason.name.lower() if res.finish_reason else None
+                num_prompt_tokens = res.num_prompt_tokens
+                num_generated_tokens = res.num_generated_tokens
+        return text_outputs, finish_reason, num_prompt_tokens, num_generated_tokens
 
     def create_error_response(self, status_code: int, message: str) -> JSONResponse:
         return JSONResponse(

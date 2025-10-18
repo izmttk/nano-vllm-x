@@ -51,21 +51,21 @@ class OpenAIServingChat(OpenAIServing):
                 media_type="text/event-stream",
             )
 
-        text_outputs = await self._generate_full(prompt, sampling_params)
-
+        (
+            text_outputs,
+            finish_reason,
+            num_prompt_tokens,
+            num_generated_tokens,
+        ) = await self._generate_full(prompt, sampling_params)
+        assert finish_reason == "stop" or finish_reason == "length"
         choices = [
             ChatCompletionResponseChoice(
                 index=i,
                 message=ChatMessage(role="assistant", content=text_outputs[i]),
-                # TODO: add finish_reason in engine output
-                finish_reason="stop",
+                finish_reason=finish_reason,
             )
             for i in range(sampling_params.n)
         ]
-        num_prompt_tokens = len(self.tokenizer.tokenize(prompt))
-        num_generated_tokens = sum(
-            len(self.tokenizer.tokenize(output)) for output in text_outputs
-        )
         usage = UsageInfo(
             prompt_tokens=num_prompt_tokens,
             completion_tokens=num_generated_tokens,
@@ -101,10 +101,12 @@ class OpenAIServingChat(OpenAIServing):
             )
             data = chunk.model_dump_json(exclude_unset=True,)
             yield f"data: {data}\n\n"
-
+        finish_reason = None
         async for output in self.engine.generate(prompt, sampling_params):
             for i in range(sampling_params.n):
-                delta_text = output
+                delta_text = output.token_str
+                if output.is_finished:
+                    finish_reason = output.finish_reason
                 choice_data = ChatCompletionResponseStreamChoice(
                     index=i,
                     delta=DeltaMessage(content=delta_text),
@@ -120,10 +122,14 @@ class OpenAIServingChat(OpenAIServing):
                 )
                 data = chunk.model_dump_json(exclude_unset=True)
                 yield f"data: {data}\n\n"
+                
+        assert finish_reason is not None
+        finish_reason = finish_reason.name.lower()
+        assert finish_reason == "stop" or finish_reason == "length"
 
         for i in range(sampling_params.n):
             choice_data = ChatCompletionResponseStreamChoice(
-                index=i, delta=DeltaMessage(), logprobs=None, finish_reason="stop"
+                index=i, delta=DeltaMessage(), logprobs=None, finish_reason=finish_reason
             )
             chunk = ChatCompletionStreamResponse(
                 id=request_id,
