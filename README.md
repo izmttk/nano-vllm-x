@@ -11,6 +11,7 @@
 - OpenAI 兼容的 API
 - 基于 Radix Tree 的 Prefix Caching
 - 张量并行（Tensor Parallelism）
+- CUDA Graph 支持（仅 Decoding 阶段）
 
 ## Requirements
 
@@ -49,10 +50,29 @@ async main(prompt: str, *args, **kwargs):
         print(token, end="", flush=True)
 ```
 
+## Benchmarks
+
+Experiment Environment:
+
+- GPU: A100 40GB
+- Model: Qwen3-0.6B
+- Number of Requests: 256
+- Prompt Length: random 100 ~ 1024
+- Generation Length: random 100 ~ 1024
+- Script: [bench.py](bench.py)
+
+Results:
+
+| Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
+|------------------|---------------|----------|-----------------------|
+| vLLM v0.11.0     | 133966        | 18.24    |  7343.96              |
+| ours             | 133966        | 14.83    |  9032.37              |
+
 ## TODO
 
-- Performance Optimization (CUDA Graph, Torch compilation, etc.)
-- Benchmark
+- Graceful Shutdown
+- Better Logging System
+- Benchmark Metrics on API Server
 - Pipeline Parallelism
 - More Configurable Options
 
