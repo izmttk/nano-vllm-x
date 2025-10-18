@@ -43,7 +43,7 @@ async def main():
     nums = await asyncio.gather(*tasks)
     
     t = (time.time() - t)
-    total_tokens = sum(nums)
+    total_tokens = sum(s.max_tokens or 0 for s in sampling_params)
     throughput = total_tokens / t
     print(f"Total: {total_tokens}tok, Time: {t:.2f}s, Throughput: {throughput:.2f}tok/s")
     llm.shutdown()
