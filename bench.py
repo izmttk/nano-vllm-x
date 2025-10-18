@@ -6,10 +6,8 @@ from core.common import SamplingParams
 import asyncio
 
 async def consume_async_gen(async_gen):
-    num = 0
     async for _ in async_gen:
-        num += 1
-    return num
+        pass
 
 async def main():
     seed(0)
@@ -20,18 +18,17 @@ async def main():
     path = "../Qwen3-0.6B"
     llm = LLM(
         model=path,
-        gpu_memory_utilization=0.6,
-        max_bs=50,
+        gpu_memory_utilization=0.8,
+        max_bs=256,
         tp_size=1,
         pp_size=1,
         nccl_port=29500,
         device_ids=[0],
+        context_len=4096,
     )
 
     prompt_token_ids = [[randint(0, 10000) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)]
     sampling_params = [SamplingParams(temperature=0.6, ignore_eos=True, max_tokens=randint(100, max_ouput_len)) for _ in range(num_seqs)]
-    # uncomment the following line for vllm
-    # prompt_token_ids = [dict(prompt_token_ids=p) for p in prompt_token_ids]
 
     await consume_async_gen(llm.generate("Benchmark: ", SamplingParams(max_tokens=10)))
     print("Start Profiling ...")
@@ -40,7 +37,7 @@ async def main():
     tasks = []
     for p, s in zip(prompt_token_ids, sampling_params):
         tasks.append(consume_async_gen(llm.generate(p, s)))
-    nums = await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks)
     
     t = (time.time() - t)
     total_tokens = sum(s.max_tokens or 0 for s in sampling_params)

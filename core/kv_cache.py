@@ -104,21 +104,17 @@ class KVCacheAllocator:
         size: int,
     ):
         self.size = size
-
-        self.free_slots = list(range(size))
+        # Use a stack (LIFO) for O(1) amortized alloc/free.
+        self.free_slots = list(reversed(range(size)))
 
     def alloc(self, need_size: int):
         if need_size > len(self.free_slots):
             return None
-
-        select_index = self.free_slots[:need_size]
-        self.free_slots = self.free_slots[need_size:]
+        select_index = [self.free_slots.pop() for _ in range(need_size)]
         return select_index
 
     def free(self, free_index: abc.Iterable[int]):
         self.free_slots.extend(free_index)
-        self.free_slots.sort()
-
 
 class RadixTreeNode:
     def __init__(
