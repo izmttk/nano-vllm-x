@@ -69,6 +69,13 @@ class Worker:
         print(f"Worker {self.rank} started with TP rank {self.tp_rank}, PP rank {self.pp_rank}.")
 
     def destroy_environment(self):
+        # Resolve hanging issues with CUDA graphs enabled
+        # See: https://github.com/pytorch/pytorch/issues/115388
+        get_world_group().barrier()
+        torch.cuda.synchronize(self.device)
+        if self.model_runner.cuda_graph is not None:
+            self.model_runner.cuda_graph.clear()
+
         destroy_model_parallel()
         destroy_distributed_environment()
         print(f"Worker {self.rank} destroyed its environment.")

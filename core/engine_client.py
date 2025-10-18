@@ -83,7 +83,6 @@ class EngineClient:
 
         self.output_queue.put_nowait(None)
         engine.shutdown()
-        print(f"Engine has shut down.")
 
     def shutdown(self):
         self.input_queue.put_nowait("shutdown")  # Send shutdown signal

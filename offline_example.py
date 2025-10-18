@@ -7,10 +7,10 @@ async def main():
         model="../Qwen3-0.6B",
         gpu_memory_utilization=0.8,
         max_bs=50,
-        tp_size=1,
+        tp_size=4,
         pp_size=1,
         nccl_port=29500,
-        device_ids=[0],
+        device_ids=[0, 1, 2, 3],
     )
     prompt = "Hello, my name is"
     print(prompt, end='', flush=True)
@@ -18,7 +18,7 @@ async def main():
     async for out in llm.generate(
         prompt,
         SamplingParams(
-            max_new_tokens=50,
+            max_new_tokens=200,
             temperature=0.6,
             top_p=0.95,
             top_k=20,

@@ -45,3 +45,12 @@ class CUDAGraph:
         assert bs <= self.max_bs and self.graphs
         index = bisect.bisect_left(self.captured_bs, bs)
         return self.captured_bs[index]
+    
+    def clear(self):
+        self.graphs.clear()
+        self.captured_bs.clear()
+        self.is_captured = False
+        self.max_bs = 0
+        self.graph_pool = None
+        self.input_buffers.clear()
+        self.output_buffers.clear()
