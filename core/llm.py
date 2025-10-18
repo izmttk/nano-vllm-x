@@ -4,7 +4,6 @@ from core.common import SamplingParams
 import asyncio
 from transformers import AutoTokenizer, PreTrainedTokenizer
 import uuid
-import threading
 
 def init_tokenizer(model: str) -> PreTrainedTokenizer:
     tokenizer = AutoTokenizer.from_pretrained(model, use_fast=False, trust_remote_code=True)
@@ -24,6 +23,7 @@ class LLM:
         pp_size: int = 1,
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
+        enforce_eager: bool = False,
     ):
         self.engine = EngineClient(
             model,
@@ -33,18 +33,18 @@ class LLM:
             pp_size,
             nccl_port,
             device_ids,
+            enforce_eager,
         )
     
         self.tokenizer = init_tokenizer(model)
         self.event_loop = asyncio.get_event_loop()
 
         self.request_states: dict[int, asyncio.Queue[str | None]] = {}
-        self.process_output_thread = threading.Thread(target=self._process_outputs)
-        self.process_output_thread.start()
+        self.process_outputs_task = asyncio.create_task(self._process_outputs_async())
 
-    def _process_outputs(self):
+    async def _process_outputs_async(self):
         while True:
-            outputs = self.engine.get_output()
+            outputs = await self.event_loop.run_in_executor(None, self.engine.get_output)
             if outputs is None: # Shutdown signal
                 break
             for output in outputs:
@@ -54,17 +54,11 @@ class LLM:
                     q = self.request_states[seq_id]
                     token_str = self.detokenize([[new_token_id]])[0]
                     if output.is_finished:
-                        self.event_loop.call_soon_threadsafe(
-                            q.put_nowait, token_str
-                        )
-                        self.event_loop.call_soon_threadsafe(
-                            q.put_nowait, None  # Sentinel for end of generation
-                        )
+                        q.put_nowait(token_str)
+                        q.put_nowait(None)  # Sentinel for end of generation
                         del self.request_states[seq_id]
                     else:
-                        self.event_loop.call_soon_threadsafe(
-                            q.put_nowait, token_str
-                        )
+                        q.put_nowait(token_str)
 
     def tokenize(self, texts: list[str]) -> list[list[int]]:
         return self.tokenizer(texts)["input_ids"] # type: ignore
@@ -77,12 +71,15 @@ class LLM:
     
     async def generate(
         self,
-        prompts: str,
+        prompts: str | list[int],
         params: SamplingParams,
     ) -> AsyncGenerator[str, None]:
         seq_id = uuid.uuid4().int
         try:
-            token_ids = self.tokenize([prompts])[0]
+            if isinstance(prompts, list):
+                token_ids = prompts
+            else:
+                token_ids = self.tokenize([prompts])[0]
             q: asyncio.Queue[str | None] = asyncio.Queue()
             
             if params.eos_token_id == -1:
@@ -115,4 +112,4 @@ class LLM:
 
     def shutdown(self):
         self.engine.shutdown()
-        self.process_output_thread.join()
+        self.process_outputs_task.cancel()
