@@ -2,7 +2,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from typing import Any, overload
 
 class RMSNorm(nn.Module):
     def __init__(
@@ -14,7 +13,7 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
 
-
+    @torch.compile
     def forward(
         self,
         x: torch.Tensor,

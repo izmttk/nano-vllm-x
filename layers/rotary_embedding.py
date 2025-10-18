@@ -70,6 +70,7 @@ class RotaryEmbedding(nn.Module):
         cache = torch.cat((cos, sin), dim=-1)
         return cache
 
+    @torch.compile
     def forward(
         self,
         positions: torch.Tensor,
