@@ -5,8 +5,8 @@ async def main():
     print("Initializing LLM...")
     llm = LLM(
         model="../Qwen3-0.6B",
-        gpu_memory_utilization=0.9,
-        max_bs=4,
+        gpu_memory_utilization=0.8,
+        max_bs=50,
         tp_size=1,
         pp_size=1,
         nccl_port=29500,
@@ -15,7 +15,7 @@ async def main():
     prompt = "Hello, my name is"
     print(prompt, end='', flush=True)
     
-    async for token in llm.generate(
+    async for out in llm.generate(
         prompt,
         SamplingParams(
             max_new_tokens=50,
@@ -24,7 +24,7 @@ async def main():
             top_k=20,
         ),
     ):
-        print(token, end='', flush=True)
+        print(out.token_str, end='', flush=True)
     print()
 
     llm.shutdown()
