@@ -11,10 +11,12 @@ class Executor:
     def __init__(
         self,
         model: str,
+        max_bs: int,
         tp_size: int,
         pp_size: int,
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
+        enforce_eager: bool = False,
     ):
         self.tp_size = tp_size
         self.pp_size = pp_size
@@ -35,12 +37,14 @@ class Executor:
                     is_driver_worker = True
                 worker = WorkerClient(
                     model=model,
+                    max_bs=max_bs,
                     tp_rank=tp_rank,
                     tp_size=tp_size,
                     pp_rank=pp_rank,
                     pp_size=pp_size,
                     nccl_port=self.nccl_port,
-                    is_driver_worker=is_driver_worker
+                    is_driver_worker=is_driver_worker,
+                    enforce_eager=enforce_eager,
                 )
                 if is_driver_worker:
                     self.driver_worker = worker

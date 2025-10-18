@@ -1,14 +1,16 @@
 import torch
+import torch.nn as nn
 from model_loader import load_model
 from models.registry import MODEL_REGISTRY
 from transformers import AutoConfig, PretrainedConfig
 from layers.sampler import Sampler
 from core.kv_cache import KVCachePool
-from core.common import ForwardBatch
+from core.common import ForwardBatch, ForwardMode
+from core.cuda_graph import CUDAGraph
 from distributed.parallel_state import get_tp_group, get_pp_group
 from distributed.utils import get_pp_indices
 import torch.distributed as dist
-from layers.attention import attention_kv_cache, AttentionMetadata
+from layers.attention import attention_kv_cache, AttentionBackend
 import os
 
 _STR_DTYPE_TO_TORCH_DTYPE = {
@@ -58,12 +60,16 @@ class ModelRunner:
     def __init__(
         self,
         model: str,
+        max_bs: int,
         rank: int,
         device: torch.device,
+        enforce_eager: bool = False,
     ):
         self.model_path = model
+        self.max_bs = max_bs
         self.rank = rank
         self.device = device
+        self.enforce_eager = enforce_eager
         set_cuda_arch()
     
     def load_model(self):
@@ -130,6 +136,19 @@ class ModelRunner:
             start_layer=self.start_layer,
             end_layer=self.end_layer,
         )
+        self.attn_backend = AttentionBackend(
+            kv_cache=self.kv_cache,
+            num_qo_heads=self.num_heads,
+            num_kv_heads=self.num_kv_heads,
+            head_dim=self.head_dim,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        if not self.enforce_eager:
+            self.cuda_graph = CUDAGraph()
+            self.capture_graph()
+        else:
+            self.cuda_graph = None
 
     def profile_kv_cache_size(self, gpu_memory_utilization: float = 0.9):
         cache_memsize_per_token = self.num_layers * self.num_kv_heads * self.head_dim * 2 * self.dtype.itemsize
@@ -205,30 +224,107 @@ class ModelRunner:
             "Model and sampler must be loaded before execution."
         assert hasattr(self, "kv_cache"), "KV Cache not initialized yet."
 
-        input_ids, positions = self.prepare_input(batch)
-        
-        attention_metadata = AttentionMetadata.build(
-            batch=batch,
-            kv_cache=self.kv_cache,
-            num_qo_heads=self.num_heads,
-            num_kv_heads=self.num_kv_heads,
-            head_dim=self.head_dim,
-            dtype=self.dtype,
-            device=self.device,
-        )
+        if self.cuda_graph is not None and self.cuda_graph.is_captured and batch.forward_mode == ForwardMode.DECODE:
+            logits = self._execute_model_cuda_graph(batch)
+        else:
+            logits = self._execute_model_eager(batch)
 
-        with attention_kv_cache(self.model, attention_metadata):
-            hidden_states = self.model(input_ids, positions)
-
-        hidden_states = self.prepare_last_hidden_states(batch, hidden_states)
-        logits = self.model.compute_logits(hidden_states)
-        
         (
             temperatures,
             min_ps,
             top_ps,
             top_ks
         ) = self.prepare_sampling_params(batch)
-        tensor_output_ids = self.sampler(logits, temperatures, min_ps, top_ps, top_ks)
+        output_ids = self.sampler(logits, temperatures, min_ps, top_ps, top_ks)
+        return output_ids.tolist()
+    
+    
+    def _execute_model_cuda_graph(self, batch: ForwardBatch) -> torch.Tensor:
+        assert self.cuda_graph is not None
+        input_ids, positions = self.prepare_input(batch)
+        
+        input_idx_buffer = self.cuda_graph.get_input_buffer("input_ids")
+        positions_buffer = self.cuda_graph.get_input_buffer("positions")
+        
+        input_idx_buffer[:len(input_ids)] = input_ids
+        positions_buffer[:len(positions)] = positions
+        
+        bs = batch.num_seqs
+        padded_bs = self.cuda_graph.match_bs(bs)
+        
+        attention_metadata = self.attn_backend.build_metadata_for_cuda_graph_replay(
+            graph=self.cuda_graph,
+            batch=batch,
+            padded_bs=padded_bs,
+        )
+        
+        with attention_kv_cache(self.model, attention_metadata):
+            self.cuda_graph.replay(bs=padded_bs)
+            
+        hidden_states_buffer = self.cuda_graph.get_output_buffer("hidden_states")
+        hidden_states = hidden_states_buffer[:bs]
+    
+        hidden_states = self.prepare_last_hidden_states(batch, hidden_states)
+        logits = self.model.compute_logits(hidden_states)
+        return logits
 
-        return tensor_output_ids.tolist()
+    def _execute_model_eager(self, batch: ForwardBatch) -> torch.Tensor:
+        input_ids, positions = self.prepare_input(batch)
+        
+        attention_metadata = self.attn_backend.build_metadata(batch=batch)
+
+        with attention_kv_cache(self.model, attention_metadata):
+            hidden_states = self.model(input_ids, positions)
+
+        hidden_states = self.prepare_last_hidden_states(batch, hidden_states)
+        logits = self.model.compute_logits(hidden_states)
+        return logits
+
+    @torch.inference_mode()
+    def capture_graph(self):
+        assert self.cuda_graph is not None
+        graph_bs = [1, 2, 4, 8] + list(range(16, self.max_bs, 16))
+        if self.max_bs not in graph_bs:
+            graph_bs.append(self.max_bs)
+
+        print("Capturing CUDA graphs for batch sizes:", graph_bs)
+
+        input_ids = torch.zeros(
+            (self.max_bs,),
+            dtype=torch.long,
+            device=self.device
+        )
+        positions = torch.zeros(
+            (self.max_bs,),
+            dtype=torch.long,
+            device=self.device
+        )
+        hidden_states = torch.zeros(
+            (self.max_bs, self.hf_config.hidden_size),
+            dtype=self.dtype,
+            device=self.device
+        )
+        self.cuda_graph.set_input_buffer("input_ids", input_ids)
+        self.cuda_graph.set_input_buffer("positions", positions)
+        self.cuda_graph.set_output_buffer("hidden_states", hidden_states)
+        
+        self.attn_backend.prepare_for_cuda_graph_capture(
+            graph=self.cuda_graph,
+            max_bs=self.max_bs,
+            context_len=2048,
+        )
+        
+        for bs in reversed(graph_bs):
+            attention_metadata = self.attn_backend.build_metadata_for_cuda_graph_capture(
+                graph=self.cuda_graph,
+                bs=bs,
+                context_len=2048,
+            )
+
+            with attention_kv_cache(self.model, attention_metadata):
+                # Warmup before capture
+                hidden_states[:bs] = self.model(input_ids[:bs], positions[:bs])
+                with self.cuda_graph.capture(bs):
+                    hidden_states[:bs] = self.model(input_ids[:bs], positions[:bs])
+            
+            torch.cuda.synchronize()

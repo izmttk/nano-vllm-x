@@ -37,6 +37,7 @@ async def lifespan(app: fastapi.FastAPI):
         pp_size=args.pp_size,
         nccl_port=args.nccl_port,
         device_ids=device_ids,
+        enforce_eager=args.enforce_eager,
     )
 
     app.state.model_name = args.model
@@ -117,6 +118,11 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Comma-separated list of GPU device IDs to use",
+    )
+    parser.add_argument(
+        "--enforce-eager",
+        action="store_true",
+        help="Enforce eager execution, disable CUDA graph",
     )
     args = parser.parse_args()
     

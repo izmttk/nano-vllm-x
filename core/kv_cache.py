@@ -3,8 +3,50 @@ from collections import abc
 import torch
 import heapq
 import time
+import triton
+import triton.language as tl
 
 from core.common import Sequence, SequenceStatus
+
+
+@triton.jit
+def store_kvcache_kernel(
+    kv_ptr: tl.tensor,
+    kv_stride: int,
+    kv_cache_ptr: tl.tensor,
+    kv_indices_ptr: tl.tensor,
+    BLOCK_SIZE: tl.constexpr,
+):
+    idx = tl.program_id(0)
+    kv_index = tl.load(kv_indices_ptr + idx)
+    if kv_index == -1:
+        return
+    kv_offsets = idx * kv_stride + tl.arange(0, BLOCK_SIZE)
+    kv = tl.load(kv_ptr + kv_offsets)
+    cache_offsets = kv_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    tl.store(kv_cache_ptr + cache_offsets, kv)
+
+def store_kvcache(
+    k: torch.Tensor,
+    v: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    kv_indices: torch.Tensor
+):
+    """
+    An index-put operation for kv cache update compatible with cuda graph.
+    """
+    num_tokens, num_heads, head_dim = k.shape
+    BLOCK_SIZE = num_heads * head_dim
+    assert k.stride(-1) == 1 and v.stride(-1) == 1
+    assert k.stride(-2) == head_dim and v.stride(-2) == head_dim
+    assert k_cache.stride(-3) == BLOCK_SIZE and v_cache.stride(-3) == BLOCK_SIZE
+    assert kv_indices.numel() == num_tokens
+    
+    grid = (num_tokens,)
+    store_kvcache_kernel[grid](k, k.stride(0), k_cache, kv_indices, BLOCK_SIZE) # type: ignore
+    store_kvcache_kernel[grid](v, v.stride(0), v_cache, kv_indices, BLOCK_SIZE) # type: ignore
+
 
 # KVCachePool should be instantiated in each worker
 class KVCachePool:
@@ -51,9 +93,15 @@ class KVCachePool:
         return k_cache, v_cache
     
     def set_kv_cache(self, layer: int, index: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor):
-        self.k_cache[layer - self.start_layer, index] = k_cache
-        self.v_cache[layer - self.start_layer, index] = v_cache
-
+        # self.k_cache[layer - self.start_layer, index] = k_cache
+        # self.v_cache[layer - self.start_layer, index] = v_cache
+        store_kvcache(
+            k_cache,
+            v_cache,
+            self.k_cache[layer - self.start_layer],
+            self.v_cache[layer - self.start_layer],
+            index
+        )
 
 class KVCacheAllocator:
     def __init__(

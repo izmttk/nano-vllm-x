@@ -15,20 +15,23 @@ class Worker:
     def __init__(
         self,
         model: str,
-        
+        max_bs: int,
         tp_rank: int,
         tp_size: int,
         pp_rank: int,
         pp_size: int,
         nccl_port: int,
+        enforce_eager: bool = False,
     ):
         self.model = model
+        self.max_bs = max_bs
         
         self.tp_rank = tp_rank
         self.pp_rank = pp_rank
         self.tp_size = tp_size
         self.pp_size = pp_size
         self.nccl_port = nccl_port
+        self.enforce_eager = enforce_eager
         
         self.rank = pp_rank * tp_size + tp_rank
         self.world_size = pp_size * tp_size
@@ -55,8 +58,10 @@ class Worker:
         self.device = torch.device(f"cuda:{self.rank}")
         self.model_runner = ModelRunner(
             model=self.model,
+            max_bs=self.max_bs,
             rank=self.rank,
             device=self.device,
+            enforce_eager=self.enforce_eager,
         )
         print(f"Worker {self.rank} started with TP rank {self.tp_rank}, PP rank {self.pp_rank}.")
 

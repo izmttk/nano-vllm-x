@@ -69,7 +69,6 @@ class Scheduler:
                 forward_mode=ForwardMode.PREFILL,
                 num_seqs=len(batch),
                 seqs=batch,
-                max_bs=self.max_bs
             )
 
         # Otherwise, schedule decode from running queue
@@ -99,7 +98,6 @@ class Scheduler:
                 forward_mode=ForwardMode.DECODE,
                 num_seqs=len(batch),
                 seqs=batch,
-                max_bs=self.max_bs
             )
         
         return None

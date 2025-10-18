@@ -23,13 +23,16 @@ class Engine:
         pp_size: int,
         nccl_port: int = 29500,
         device_ids: list[int] | None = None,
+        enforce_eager: bool = False,
     ):
         self.model_executor = Executor(
             model=model,
+            max_bs=max_bs,
             tp_size=tp_size,
             pp_size=pp_size,
             nccl_port=nccl_port,
             device_ids=device_ids,
+            enforce_eager=enforce_eager,
         )
         
         kv_cache_size = self.model_executor.profile_kv_cache_size(gpu_memory_utilization)
@@ -71,7 +74,7 @@ class Engine:
         batch = self.scheduler.schedule()
         if not batch:
             return []
-
+        # print(f"Scheduled batch {batch.forward_mode.name} with {batch.num_seqs} sequences.")
         output_ids = self.model_executor.execute_model(batch)
         outputs: list[EngineOutput] = []
         

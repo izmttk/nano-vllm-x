@@ -45,4 +45,3 @@ class ForwardBatch:
     forward_mode: ForwardMode
     num_seqs: int
     seqs: list[Sequence]
-    max_bs: int

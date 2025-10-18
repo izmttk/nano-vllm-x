@@ -7,14 +7,17 @@ class WorkerClient:
     def __init__(
         self,
         model: str,
+        max_bs: int,
         tp_rank: int,
         tp_size: int,
         pp_rank: int,
         pp_size: int,
         nccl_port: int = 29500,
         is_driver_worker = False,
+        enforce_eager: bool = False,
     ):
         self.model = model
+        self.max_bs = max_bs
         
         self.tp_rank = tp_rank
         self.tp_size = tp_size
@@ -26,6 +29,7 @@ class WorkerClient:
         self.nccl_port = nccl_port
         
         self.is_driver_worker = is_driver_worker
+        self.enforce_eager = enforce_eager
         self.methods = {}  # 用于存储注册的方法
         
         
@@ -51,11 +55,13 @@ class WorkerClient:
     def worker_main_loop(self):
         worker = Worker(
             model=self.model,
+            max_bs=self.max_bs,
             tp_rank=self.tp_rank,
             tp_size=self.tp_size,
             pp_rank=self.pp_rank,
             pp_size=self.pp_size,
-            nccl_port=self.nccl_port
+            nccl_port=self.nccl_port,
+            enforce_eager=self.enforce_eager,
         )
         worker.init_environment()
         worker.load_model()
