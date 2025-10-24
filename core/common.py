@@ -1,8 +1,5 @@
-from typing import Optional
 from dataclasses import dataclass, field
 import enum
-import torch
-import uuid
 
 @dataclass
 class SamplingParams:
@@ -32,7 +29,7 @@ class GenerateOutput:
 
 @dataclass
 class EngineOutput:
-    seq_id: int
+    seq_id: str
     new_token_id: int
     is_finished: bool
     finish_reason: FinishReason | None
@@ -46,7 +43,7 @@ class SequenceStatus(enum.Enum):
 
 @dataclass
 class Sequence:
-    seq_id: int = field(default_factory=lambda: uuid.uuid4().int)
+    seq_id: str
     status: SequenceStatus = SequenceStatus.WAITING
     num_tokens: int = 0
     prompt_len: int = 0

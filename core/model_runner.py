@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from model_loader import load_model
 from models.registry import MODEL_REGISTRY
 from transformers import AutoConfig, PretrainedConfig

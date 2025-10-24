@@ -15,7 +15,6 @@ from entrypoints.openai.protocol import (
     UsageInfo,
 )
 from entrypoints.openai.serving_engine import OpenAIServing
-from core.common import SamplingParams
 
 
 class OpenAIServingChat(OpenAIServing):
@@ -56,7 +55,7 @@ class OpenAIServingChat(OpenAIServing):
             finish_reason,
             num_prompt_tokens,
             num_generated_tokens,
-        ) = await self._generate_full(prompt, sampling_params)
+        ) = await self._generate_full(prompt, sampling_params, request_id)
         assert finish_reason == "stop" or finish_reason == "length"
         choices = [
             ChatCompletionResponseChoice(
@@ -102,7 +101,7 @@ class OpenAIServingChat(OpenAIServing):
             data = chunk.model_dump_json(exclude_unset=True,)
             yield f"data: {data}\n\n"
         finish_reason = None
-        async for output in self.engine.generate(prompt, sampling_params):
+        async for output in self.engine.generate(prompt, sampling_params, request_id):
             for i in range(sampling_params.n):
                 delta_text = output.token_str
                 if output.is_finished:

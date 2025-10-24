@@ -14,7 +14,7 @@ from layers.layernorm import RMSNorm
 from layers.linear import MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear
 from layers.rotary_embedding import RotaryEmbedding
 from layers.vocab_parallel_embedding import ParallelLMHead, VocabParallelEmbedding
-from layers.utils import PPMissingLayer, get_layer_id
+from layers.utils import IntermediateTensors, PPMissingLayer, get_layer_id
 
 from model_loader import default_weight_loader
 
@@ -180,8 +180,6 @@ class Qwen3DecoderLayer(nn.Module):
         return hidden_states, residual # type: ignore
 
 
-IntermediateTensors = dict[str, Optional[torch.Tensor]]
-
 def make_layers(
     num_hidden_layers: int,
     layer_fn: Callable[[int], nn.Module],
@@ -253,10 +251,11 @@ class Qwen3Model(nn.Module):
                 residual,
             )
         if not is_last_rank(get_pp_group()):
-            return {
-                "hidden_states": hidden_states,
-                "residual": residual
-            }
+            assert hidden_states is not None and residual is not None
+            return IntermediateTensors(
+                hidden_states=hidden_states,
+                residual=residual
+            )
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 

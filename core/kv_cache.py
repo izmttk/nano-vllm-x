@@ -314,7 +314,7 @@ class KVCacheManager:
         self.kv_cache_allocator = KVCacheAllocator(size)
         self.radix_tree = RadixTree(self.kv_cache_allocator)
         # seq_id -> (prefix_len, last_node)
-        self.unfinished_sequences: dict[int, tuple[int, RadixTreeNode]] = {}
+        self.unfinished_sequences: dict[str, tuple[int, RadixTreeNode]] = {}
 
     def alloc_slots(self, num_slots: int):
         indices = self.kv_cache_allocator.alloc(num_slots)

@@ -1,9 +1,9 @@
 import os
+import uuid
 from core.worker_client import WorkerClient
 
 import threading
 from concurrent.futures import Future
-import torch
 
 from core.common import ForwardBatch
 
@@ -33,9 +33,7 @@ class Executor:
         self.driver_worker: WorkerClient
         for pp_rank in range(pp_size):
             for tp_rank in range(tp_size):
-                is_driver_worker = False
-                if tp_rank == 0 and pp_rank == pp_size - 1:
-                    is_driver_worker = True
+                is_driver_worker = tp_rank == 0 and pp_rank == pp_size - 1
                 worker = WorkerClient(
                     model=model,
                     max_bs=max_bs,
@@ -51,21 +49,22 @@ class Executor:
                 if is_driver_worker:
                     self.driver_worker = worker
                 self.workers.append(worker)
-
-        self.collect_response_thread = threading.Thread(
-            target=self.collect_response
+        for worker in self.workers:
+            worker.wait_until_ready()
+        self.collect_thread = threading.Thread(
+            target=self._collect_loop
         )
-        self.collect_response_thread.start()
-        self.pending = {}  # 跟踪进行中的请求 {request_id: future}
+        self.collect_thread.start()
+        self.pending: dict[str, Future[list[int]]] = {}  # 跟踪进行中的请求 {request_id: future}
 
-    def collect_response(self):
+    def _collect_loop(self):
         while True:
-            request_id, data = self.driver_worker.recv_response()
+            msg = self.driver_worker.recv_response()
+            if msg == "shutdown":
+                break
+            request_id, data = msg
             future = self.pending.pop(request_id, None)
             if future:
-                if data == "shutdown":
-                    future.set_result(None)
-                    break
                 assert isinstance(data, dict)
                 if data['status'] == 'success':
                     future.set_result(data['result'])
@@ -74,18 +73,17 @@ class Executor:
         print("Executor stopped response collection.")
 
     def shutdown(self):
-        self.execute("shutdown")
-
         for worker in self.workers:
-            worker.worker_process.join()
-        self.collect_response_thread.join()
+            worker.shutdown()
+        self.driver_worker.output_queue.put_nowait("shutdown")
+        self.collect_thread.join()
 
         print("Executor has been shut down.")
 
     def execute(self, method, *args, **kwargs):
         """发起RPC调用，返回调用结果"""
         
-        request_id = str(id(kwargs))  # 生成唯一ID
+        request_id = uuid.uuid4().hex
         request = {
             'method': method,
             'args': args,

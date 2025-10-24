@@ -1,7 +1,7 @@
 import asyncio
-from typing import AsyncGenerator, Union
+from typing import Union
 
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from core.llm import LLM
 from core.common import SamplingParams
@@ -19,12 +19,12 @@ class OpenAIServing:
         self.model_name = model_name
         self.tokenizer = engine.tokenizer
 
-    async def _generate_full(self, prompt: str, sampling_params: SamplingParams):
+    async def _generate_full(self, prompt: str, sampling_params: SamplingParams, request_id: str):
         text_outputs = ["" for _ in range(sampling_params.n)]
         finish_reason = None
         num_prompt_tokens = 0
         num_generated_tokens = 0
-        async for res in self.engine.generate(prompt, sampling_params):
+        async for res in self.engine.generate(prompt, sampling_params, request_id):
             for i in range(sampling_params.n):
                 token_str = res.token_str
                 text_outputs[i] += token_str

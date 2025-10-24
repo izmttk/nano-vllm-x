@@ -38,6 +38,7 @@ class WorkerClient:
         self.mp_ctx = mp.get_context('spawn')
         self.input_queue = self.mp_ctx.Queue()
         self.output_queue = self.mp_ctx.Queue()
+        self.ready_event = self.mp_ctx.Event()
         self.init_worker()
 
     def init_worker(self):
@@ -52,6 +53,13 @@ class WorkerClient:
 
     def recv_response(self, timeout: Optional[float] = None):
         return self.output_queue.get(timeout=timeout)
+    
+    def shutdown(self):
+        self.input_queue.put_nowait('shutdown')
+        self.worker_process.join()
+    
+    def wait_until_ready(self, timeout: Optional[float] = None):
+        self.ready_event.wait(timeout=timeout)
 
     @bind_parent_process_lifecycle
     def worker_main_loop(self):
@@ -73,13 +81,12 @@ class WorkerClient:
         self.methods["initialize_kv_cache"] = worker.initialize_kv_cache
         self.methods["profile_kv_cache_size"] = worker.profile_kv_cache_size
         
+        self.ready_event.set()
         while True:
-            request_id, data = self.input_queue.get()  # 等待输入
-            method_name = data.get('method')
-            if method_name == "shutdown":
-                if self.is_driver_worker:
-                    self.output_queue.put_nowait((request_id, "shutdown"))
+            msg = self.input_queue.get()  # 等待输入
+            if msg == 'shutdown':
                 break
+            request_id, data = msg
             response = self.handle_request(data)  # 处理请求
             if self.is_driver_worker:
                 self.output_queue.put_nowait((request_id, response))
@@ -89,8 +96,8 @@ class WorkerClient:
     def handle_request(self, request):
         """处理单个请求"""
         method_name = request['method']
-        args = request.get('args', [])
-        kwargs = request.get('kwargs', {})
+        args = request.get('args', tuple())
+        kwargs = request.get('kwargs', dict())
         # 查找并调用注册的方法
         if method_name in self.methods:
             method = self.methods[method_name]

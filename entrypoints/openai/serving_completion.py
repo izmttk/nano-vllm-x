@@ -13,7 +13,6 @@ from entrypoints.openai.protocol import (
     UsageInfo,
 )
 from entrypoints.openai.serving_engine import OpenAIServing
-from core.common import SamplingParams
 
 
 class OpenAIServingCompletion(OpenAIServing):
@@ -60,7 +59,7 @@ class OpenAIServingCompletion(OpenAIServing):
             finish_reason,
             num_prompt_tokens,
             num_generated_tokens,
-        ) = await self._generate_full(prompt, sampling_params)
+        ) = await self._generate_full(prompt, sampling_params, request_id)
         assert finish_reason == "stop" or finish_reason == "length"
 
         choices = [
@@ -105,7 +104,7 @@ class OpenAIServingCompletion(OpenAIServing):
             yield f"data: {data}\n\n"
 
         finish_reason = None
-        async for output in self.engine.generate(prompt, sampling_params):
+        async for output in self.engine.generate(prompt, sampling_params, request_id):
             for i in range(sampling_params.n):
                 text = output.token_str
                 if output.is_finished:

@@ -1,4 +1,3 @@
-from typing import Optional
 from core.engine import Engine, EngineOutput
 from core.common import SamplingParams
 import torch.multiprocessing as mp
@@ -60,38 +59,39 @@ class EngineClient:
             # 如果 engine 中没有未完成的请求了，即 engine 的 waiting 和 running 队列都空了
             # 则在调用下一次 step 之前，阻塞等待一个新的请求
             if not engine.has_unfinished_sequences():
-                args = self.input_queue.get()
-                if args == "shutdown":
+                msg = self.input_queue.get()
+                if msg == "shutdown":
                     is_shutdown = True
                 else:
-                    engine.add_sequence(*args)
+                    engine.add_sequence(*msg)
             
             # 其他情况下，即存在未完成的请求，则需要继续调用 step
             while not self.input_queue.empty():
-                args = self.input_queue.get()
-                if args == "shutdown":
+                msg = self.input_queue.get()
+                if msg == "shutdown":
                     is_shutdown = True
                     break
                 else:
-                    engine.add_sequence(*args)
+                    engine.add_sequence(*msg)
                     
             if is_shutdown:
                 break
             
             outputs = engine.step()
-            self.output_queue.put_nowait(outputs)
+            if outputs:
+                self.output_queue.put_nowait(outputs)
 
         self.output_queue.put_nowait(None)
         engine.shutdown()
 
     def shutdown(self):
-        self.input_queue.put_nowait("shutdown")  # Send shutdown signal
+        self.input_queue.put_nowait("shutdown")
         self.engine_process.join()
         print("Engine has been shut down.")
 
     def add_sequence(
         self,
-        sequence_id: int,
+        sequence_id: str,
         prompt_token_ids: list[int],
         sampling_params: SamplingParams
     ):
@@ -99,9 +99,9 @@ class EngineClient:
             (sequence_id, prompt_token_ids, sampling_params)
         )
 
-    def get_output(self) -> list[EngineOutput] | None:
+    def get_output(self) -> list[EngineOutput]:
         return self.output_queue.get()
 
-    def abort_sequence(self, sequence_id: int):
+    def abort_sequence(self, sequence_id: str):
         # TODO: need implement abort in engine
         pass

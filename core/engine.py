@@ -1,7 +1,6 @@
 from core.common import FinishReason, SamplingParams, Sequence, EngineOutput
 from core.executor import Executor
 from core.scheduler import Scheduler
-from dataclasses import dataclass, field
 
 
 class Engine:
@@ -45,7 +44,7 @@ class Engine:
 
     def add_sequence(
         self,
-        sequence_id: int,
+        sequence_id: str,
         prompt_token_ids: list[int],
         sampling_params: SamplingParams,
     ):

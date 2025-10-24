@@ -4,7 +4,7 @@ Pydantic models for OpenAI API protocol.
 # Adapted from
 # https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/openai/protocol.py
 import time
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 

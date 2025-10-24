@@ -41,10 +41,10 @@ class LLM:
         self.tokenizer = init_tokenizer(model)
         self.event_loop = asyncio.get_event_loop()
 
-        self.request_states: dict[int, asyncio.Queue[GenerateOutput | None]] = {}
-        self.process_outputs_task = asyncio.create_task(self._process_outputs_async())
+        self.request_states: dict[str, asyncio.Queue[GenerateOutput | None]] = {}
+        self.output_processor_task = asyncio.create_task(self.output_processor())
 
-    async def _process_outputs_async(self):
+    async def output_processor(self):
         while True:
             outputs = await self.event_loop.run_in_executor(None, self.engine.get_output)
             if outputs is None: # Shutdown signal
@@ -87,8 +87,10 @@ class LLM:
         self,
         prompts: str | list[int],
         params: SamplingParams,
+        sequence_id: str | None = None,
     ) -> AsyncGenerator[GenerateOutput, None]:
-        seq_id = uuid.uuid4().int
+        if sequence_id is None:
+            sequence_id = uuid.uuid4().hex
         try:
             if isinstance(prompts, list):
                 token_ids = prompts
@@ -99,9 +101,9 @@ class LLM:
             if params.eos_token_id == -1:
                 params.eos_token_id = self.tokenizer.eos_token_id  # type: ignore
             
-            self.request_states[seq_id] = q
+            self.request_states[sequence_id] = q
             self.engine.add_sequence(
-                sequence_id=seq_id,
+                sequence_id=sequence_id,
                 prompt_token_ids=token_ids,
                 sampling_params=params,
             )
@@ -116,14 +118,14 @@ class LLM:
         # generate() task will be canceled. So, we abort the
         # request if we end up here.
         except asyncio.CancelledError:
-            self.abort(seq_id)
+            self.abort(sequence_id)
             raise
 
-    def abort(self, seq_id: int):
-        if seq_id in self.request_states:
-            self.engine.abort_sequence(seq_id)
-            del self.request_states[seq_id]
+    def abort(self, sequence_id: str):
+        if sequence_id in self.request_states:
+            self.engine.abort_sequence(sequence_id)
+            del self.request_states[sequence_id]
 
     def shutdown(self):
         self.engine.shutdown()
-        self.process_outputs_task.cancel()
+        self.output_processor_task.cancel()

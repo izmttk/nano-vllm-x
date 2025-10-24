@@ -107,6 +107,7 @@ class Scheduler:
         Allocate KV slots for all uncached tokens in the sequence.
         """
         num_needed = len(seq.token_ids) - len(seq.kv_indices)
+        # if kv slots are already allocated for all tokens, skip allocation
         if num_needed <= 0:
             return
         new_slots = self.kv_manager.alloc_slots(num_needed)
