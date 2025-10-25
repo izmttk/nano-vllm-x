@@ -47,7 +47,6 @@ class Sequence:
     status: SequenceStatus = SequenceStatus.WAITING
     num_tokens: int = 0
     prompt_len: int = 0
-    context_len: int | None = None
     # tokens: list[str] = field(default_factory=list)
     token_ids: list[int] = field(default_factory=list)
     sampling_params: SamplingParams = field(default_factory=SamplingParams)

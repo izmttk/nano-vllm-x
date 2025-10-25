@@ -60,7 +60,6 @@ class Engine:
             num_tokens=len(prompt_token_ids),
             prompt_len=len(prompt_token_ids),
             sampling_params=sampling_params,
-            context_len=self.context_len,
         )
         self.scheduler.add_sequence(seq)
 
@@ -107,8 +106,6 @@ class Engine:
         if seq.sampling_params.max_tokens and seq.num_tokens >= seq.sampling_params.max_tokens:
             return True, FinishReason.LENGTH
         if seq.sampling_params.max_new_tokens and seq.num_tokens >= seq.prompt_len + seq.sampling_params.max_new_tokens:
-            return True, FinishReason.LENGTH
-        if seq.context_len and seq.num_tokens >= seq.context_len:
             return True, FinishReason.LENGTH
         
         return False, None
