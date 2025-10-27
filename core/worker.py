@@ -53,10 +53,6 @@ class Worker:
             self.pp_rank,
         )
 
-        self.tp_group = get_tp_group()
-        self.pp_group = get_pp_group()
-        self.world_group = get_world_group()
-
         self.device = torch.device(f"cuda:{self.rank}")
         self.model_runner = ModelRunner(
             model=self.model,
@@ -72,7 +68,7 @@ class Worker:
         # Resolve hanging issues with CUDA graphs enabled
         # See: https://github.com/pytorch/pytorch/issues/115388
         get_world_group().barrier()
-        torch.cuda.synchronize(self.device)
+        torch.cuda.synchronize()
         if self.model_runner.cuda_graph is not None:
             self.model_runner.cuda_graph.clear()
 

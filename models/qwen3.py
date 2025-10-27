@@ -5,7 +5,7 @@ import torch
 from torch import nn
 from transformers.models.qwen3 import Qwen3Config
 
-from distributed.parallel_state import get_tp_group, get_pp_group, is_first_rank, is_last_rank
+from distributed.parallel_state import get_tp_group, get_pp_group
 from distributed.utils import get_pp_indices
 
 from layers.attention import Attention
@@ -59,7 +59,7 @@ class Qwen3Attention(nn.Module):
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
-        tp_size = get_tp_group().size()
+        tp_size = get_tp_group().size
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
         self.num_heads = self.total_num_heads // tp_size
@@ -188,8 +188,8 @@ def make_layers(
     pipeline parallelism into account.
     """
     start_layer, end_layer = get_pp_indices(num_hidden_layers,
-                                            get_pp_group().rank(),
-                                            get_pp_group().size())
+                                            get_pp_group().group_rank,
+                                            get_pp_group().size)
     modules = torch.nn.ModuleList(
         [PPMissingLayer() for _ in range(start_layer)] + [
             layer_fn(idx)
@@ -208,7 +208,7 @@ class Qwen3Model(nn.Module):
         self.config = config
         self.vocab_size = config.vocab_size
 
-        if is_first_rank(get_pp_group()):
+        if get_pp_group().is_first_rank:
             self.embed_tokens = VocabParallelEmbedding(
                 config.vocab_size,
                 config.hidden_size,
@@ -222,7 +222,7 @@ class Qwen3Model(nn.Module):
             lambda layer_id: Qwen3DecoderLayer(config=config, layer_id=layer_id)
         )
 
-        if is_last_rank(get_pp_group()):
+        if get_pp_group().is_last_rank:
             self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         else:
             self.norm = PPMissingLayer()
@@ -234,7 +234,7 @@ class Qwen3Model(nn.Module):
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        if is_first_rank(get_pp_group()):
+        if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
             else:
@@ -250,7 +250,7 @@ class Qwen3Model(nn.Module):
                 hidden_states,
                 residual,
             )
-        if not is_last_rank(get_pp_group()):
+        if not get_pp_group().is_last_rank:
             assert hidden_states is not None and residual is not None
             return IntermediateTensors(
                 hidden_states=hidden_states,
@@ -268,7 +268,7 @@ class Qwen3ForCausalLM(nn.Module):
 
         self.config = config
         self.model = Qwen3Model(config)
-        if is_last_rank(get_pp_group()):
+        if get_pp_group().is_last_rank:
             self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
         else:
             self.lm_head = PPMissingLayer()
@@ -329,4 +329,5 @@ class Qwen3ForCausalLM(nn.Module):
                     weight_loader = getattr(param, "weight_loader", default_weight_loader)
                     weight_loader(param, loaded_weight)
                 else:
-                    print(f"Unused parameter: {name}")
+                    # parameter not used in this rank due to pipeline parallelism
+                    pass

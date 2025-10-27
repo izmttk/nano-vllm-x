@@ -39,8 +39,8 @@ class ReplicatedLinear(nn.Module):
         self.params_dtype = params_dtype
         self.return_bias = return_bias
 
-        tp_size = get_tp_group().size()
-        tp_rank = get_tp_group().rank()
+        tp_size = get_tp_group().size
+        tp_rank = get_tp_group().group_rank
         
         self.tp_size = tp_size
         self.tp_rank = tp_rank
@@ -128,8 +128,8 @@ class ColumnParallelLinear(nn.Module):
         self.params_dtype = params_dtype
         self.return_bias = return_bias
 
-        tp_size = get_tp_group().size()
-        tp_rank = get_tp_group().rank()
+        tp_size = get_tp_group().size
+        tp_rank = get_tp_group().group_rank
         
         self.tp_size = tp_size
         self.tp_rank = tp_rank
@@ -229,8 +229,8 @@ class RowParallelLinear(nn.Module):
         self.reduce_results = reduce_results
         self.return_bias = return_bias
 
-        tp_size = get_tp_group().size()
-        tp_rank = get_tp_group().rank()
+        tp_size = get_tp_group().size
+        tp_rank = get_tp_group().group_rank
         self.tp_size = tp_size
         self.tp_rank = tp_rank
 
@@ -328,7 +328,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.total_num_kv_heads = total_num_kv_heads if total_num_kv_heads is not None else total_num_heads
         self.params_dtype = params_dtype
 
-        tp_size = get_tp_group().size()
+        tp_size = get_tp_group().size
         self.num_heads = divide(total_num_heads, tp_size)
 
         if tp_size > self.total_num_kv_heads:
@@ -450,7 +450,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
     ):
         self.output_sizes = output_sizes
 
-        tp_size = get_tp_group().size()
+        tp_size = get_tp_group().size
 
         for output_size in output_sizes:
             ensure_divisibility(output_size, tp_size)

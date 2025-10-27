@@ -53,8 +53,8 @@ class VocabParallelEmbedding(torch.nn.Module):
     ):
         super().__init__()
 
-        self.tp_rank = get_tp_group().rank()
-        self.tp_size = get_tp_group().size()
+        self.tp_rank = get_tp_group().group_rank
+        self.tp_size = get_tp_group().size
 
         self.num_embeddings = num_embeddings
         self.padding_size = padding_size

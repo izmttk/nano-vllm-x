@@ -6,7 +6,7 @@ from tqdm import tqdm
 from safetensors import safe_open
 import glob
 import os
-from distributed.parallel_state import is_first_rank, is_initialized
+from distributed.parallel_state import is_initialized, get_world_group
 
 def default_weight_loader(param: torch.Tensor,
                           loaded_weight: torch.Tensor) -> None:
@@ -26,7 +26,7 @@ def safetensors_weights_iterator(
     Iterate over the weights in the model safetensor files.
     """
     enable_tqdm = (
-        not is_initialized() or is_first_rank()
+        not is_initialized() or get_world_group().is_first_rank
     )
     for st_file in tqdm(
         hf_weights_files,

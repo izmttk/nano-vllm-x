@@ -6,11 +6,13 @@ from layers.sampler import Sampler
 from core.kv_cache import KVCachePool
 from core.common import ForwardBatch, ForwardMode
 from core.cuda_graph import CUDAGraph
+from distributed.communication_op import all_gather
 from distributed.parallel_state import get_tp_group, get_pp_group
 from distributed.utils import get_pp_indices
 import torch.distributed as dist
 from layers.attention import attention_kv_cache, AttentionBackend
 import os
+import gc
 
 _STR_DTYPE_TO_TORCH_DTYPE = {
     "half": torch.float16,
@@ -33,7 +35,8 @@ def get_model_config_per_gpu(
     pp_size: int,
     pp_rank: int,
 ):
-    dtype: torch.dtype = _STR_DTYPE_TO_TORCH_DTYPE[hf_config.dtype or hf_config.torch_dtype] # type: ignore
+    hf_dtype = getattr(hf_config, "dtype", None) or getattr(hf_config, "torch_dtype", "float16")
+    dtype: torch.dtype = _STR_DTYPE_TO_TORCH_DTYPE[hf_dtype]
     
     start_layer, end_layer = get_pp_indices(hf_config.num_hidden_layers, pp_rank, pp_size)
     num_layers = end_layer - start_layer
@@ -107,12 +110,14 @@ class ModelRunner:
             self.head_dim
         ) = get_model_config_per_gpu(
             self.hf_config,
-            get_tp_group().size(),
-            get_tp_group().rank(),
-            get_pp_group().size(),
-            get_pp_group().rank(),
+            get_tp_group().size,
+            get_tp_group().group_rank,
+            get_pp_group().size,
+            get_pp_group().group_rank,
         )
-        
+        print(f"Rank {self.rank} model config: {self.num_layers} layers, "
+              f"{self.num_heads} heads, {self.num_kv_heads} kv heads, head dim {self.head_dim}, "
+              f"dtype {self.dtype}, layers {self.start_layer}-{self.end_layer}.")
         
         torch.set_default_dtype(self.dtype)
 
@@ -154,14 +159,16 @@ class ModelRunner:
     def profile_kv_cache_size(self, gpu_memory_utilization: float = 0.9):
         cache_memsize_per_token = self.num_layers * self.num_kv_heads * self.head_dim * 2 * self.dtype.itemsize
         
+        gc.collect()
         torch.cuda.empty_cache()
         free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info(self.device)
         
         max_num_tokens = int(free_gpu_memory * gpu_memory_utilization) // cache_memsize_per_token
-        max_num_tokens = torch.tensor(max_num_tokens, device=self.device)
-        dist.all_reduce(max_num_tokens, op= dist.ReduceOp.MIN)
-        max_num_tokens = int(max_num_tokens.item())
+        max_num_tokens = torch.tensor([max_num_tokens], device=self.device)
+        max_num_tokens = all_gather(max_num_tokens)
+        max_num_tokens = int(max_num_tokens.min().item())
 
+        gc.collect()
         torch.cuda.empty_cache()
         return max_num_tokens
 
