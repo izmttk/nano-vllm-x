@@ -11,17 +11,20 @@
 - OpenAI 兼容的 API
 - 基于 Radix Tree 的 Prefix Caching
 - 张量并行（Tensor Parallelism）
+- 流水线并行（Pipeline Parallelism）
 - CUDA Graph 支持（仅 Decoding 阶段）
 
 ## Requirements
 
 ```plaintext
-torch >= 2.6.0
-transformers >= 4.50.0
+torch >= 2.8.0
+transformers >= 4.51.0
 fastapi >= 0.95.0
 flashinfer-python >= 0.2.0
 psutil
 ```
+
+NOTE: 我发现当 nccl 版本 < 2.27.3 时，分布式环境的销毁会存在一些问题，建议升级 nvidia-nccl-cu12 至 2.27.3 及以上版本，torch 2.8.0 的依赖中已经包含该版本的 nccl。具体原因需要进一步调查。
 
 ## Quick Start
 
@@ -73,7 +76,6 @@ Results:
 - Graceful Shutdown
 - Better Logging System
 - Benchmark Metrics on API Server
-- Pipeline Parallelism
 - More Configurable Options
 
 [WIP]

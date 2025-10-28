@@ -291,6 +291,13 @@ class Qwen3ForCausalLM(nn.Module):
         logits =self.lm_head(hidden_states)
         return logits
 
+    def make_empty_intermediate_tensors(
+        self, batch_size: int, dtype: torch.dtype, device: torch.device
+    ) -> IntermediateTensors:
+        return IntermediateTensors(
+            hidden_states=torch.empty(batch_size, self.config.hidden_size, dtype=dtype, device=device),
+            residual=torch.empty(batch_size, self.config.hidden_size, dtype=dtype, device=device),
+        )
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]):
         # 这意味着在加载权重时，需要将 q_proj k_proj v_proj 合并为 qkv_proj

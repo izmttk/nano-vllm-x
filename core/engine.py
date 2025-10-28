@@ -1,4 +1,6 @@
-from core.common import FinishReason, SamplingParams, Sequence, EngineOutput
+from concurrent.futures import Future
+import queue
+from core.common import FinishReason, ForwardBatch, SamplingParams, Sequence, EngineOutput
 from core.executor import Executor
 from core.scheduler import Scheduler
 
@@ -41,6 +43,9 @@ class Engine:
             max_bs=max_bs
         )
         
+        self.pp_queue: queue.Queue[tuple[Future[list[int]], ForwardBatch]] | None = None
+        if pp_size > 1:
+            self.pp_queue = queue.Queue(pp_size)
 
     def add_sequence(
         self,
@@ -71,13 +76,41 @@ class Engine:
         3. Executes the model.
         5. Updates the sequences.
         """
+        if self.pp_queue is not None:
+            # 注意当开启了流水线并行时，step 可能会返回空列表
+            return self.step_with_pp()
+        
         batch = self.scheduler.schedule()
         if not batch:
             return []
         # print(f"Scheduled batch {batch.forward_mode.name} with {batch.num_seqs} sequences.")
-        output_ids = self.model_executor.execute_model(batch)
+        fut = self.model_executor.execute_model(batch)
+        output_ids = fut.result()
+        outputs = self.update_from_output(batch, output_ids)
+        return outputs
+
+    def step_with_pp(self) -> list[EngineOutput]:
+        assert self.pp_queue is not None
         outputs: list[EngineOutput] = []
-        
+        batch = None
+        if not self.pp_queue.full():
+            batch = self.scheduler.schedule()
+            if batch:
+                fut = self.model_executor.execute_model(batch)
+                self.pp_queue.put_nowait((fut, batch))
+        # 如果 batch 为 None，说明要么没有新请求，要么 pp 队列已满不允许调度
+        if batch is None and not self.pp_queue.empty():
+            (fut, sched_batch) = self.pp_queue.get_nowait()
+            output_ids = fut.result() # 阻塞等待结果
+            outputs = self.update_from_output(sched_batch, output_ids)
+            
+        return outputs
+
+    def update_from_output(self, batch: ForwardBatch, output_ids: list[int]):
+        """
+        Update sequences based on the model output.
+        """
+        outputs: list[EngineOutput] = []
         # Update sequences with the model output
         for seq, new_token_id in zip(batch.seqs, output_ids):
             self.scheduler.update_sequence(seq, new_token_id)

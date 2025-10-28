@@ -40,6 +40,10 @@ class Scheduler:
         # Queues and registries
         self.waiting: Deque[Sequence] = deque()
         self.running: Deque[Sequence] = deque()
+        
+        # To avoid scheduling the same sequence multiple times in one step
+        # it's a subset of running queue
+        self.scheduled: set[str] = set()
 
         self.kv_manager = KVCacheManager(size=self.kv_cache_size)
 
@@ -64,6 +68,7 @@ class Scheduler:
             self.alloc_kv_slots(seq)
             batch.append(seq)
             self.running.append(seq)
+            self.scheduled.add(seq.seq_id)
         if batch:
             return ForwardBatch(
                 forward_mode=ForwardMode.PREFILL,
@@ -71,9 +76,14 @@ class Scheduler:
                 seqs=batch,
             )
 
+        popped_seqs: list[Sequence] = []
         # Otherwise, schedule decode from running queue
         while self.running and len(batch) < self.max_bs:
             seq = self.running.popleft()
+            popped_seqs.append(seq)
+            if seq.seq_id in self.scheduled:
+                # Already scheduled in this step, skip
+                continue
             is_allocated = False
             while not is_allocated:
                 try:
@@ -91,8 +101,9 @@ class Scheduler:
                         break
             if is_allocated:
                 batch.append(seq)
+                self.scheduled.add(seq.seq_id)
         # running queue may exists one seq (not enough slots for it)
-        self.running.extendleft(reversed(batch))
+        self.running.extendleft(reversed(popped_seqs))
         if batch:
             return ForwardBatch(
                 forward_mode=ForwardMode.DECODE,
@@ -132,6 +143,8 @@ class Scheduler:
         if not seq in self.running:
             return
         self.running.remove(seq)
+        if seq.seq_id in self.scheduled:
+            self.scheduled.remove(seq.seq_id)
         self.free_kv_slots(seq)
         seq.status = SequenceStatus.WAITING
         self.waiting.appendleft(seq)  # Preempt to the front of waiting queue
@@ -143,6 +156,7 @@ class Scheduler:
         if seq.status != SequenceStatus.RUNNING:
             return
         
+        self.scheduled.remove(seq.seq_id)
         seq.cached_kv_len = len(seq.kv_indices)
         seq.token_ids.append(new_token_id)
         seq.num_tokens = len(seq.token_ids)
@@ -159,6 +173,8 @@ class Scheduler:
         
         if seq.status == SequenceStatus.RUNNING:
             self.running.remove(seq)
+            if seq.seq_id in self.scheduled:
+                self.scheduled.remove(seq.seq_id)
         
         seq.status = SequenceStatus.FINISHED
         self.kv_manager.cache_sequence(seq)

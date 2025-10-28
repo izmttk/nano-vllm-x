@@ -56,6 +56,8 @@ class WorkerClient:
     
     def shutdown(self):
         self.input_queue.put_nowait('shutdown')
+    
+    def join(self):
         self.worker_process.join()
     
     def wait_until_ready(self, timeout: Optional[float] = None):

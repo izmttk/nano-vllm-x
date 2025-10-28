@@ -1,10 +1,8 @@
 import os
 import uuid
-from core.worker_client import WorkerClient
-
 import threading
 from concurrent.futures import Future
-
+from core.worker_client import WorkerClient
 from core.common import ForwardBatch
 
 class Executor:
@@ -51,11 +49,12 @@ class Executor:
                 self.workers.append(worker)
         for worker in self.workers:
             worker.wait_until_ready()
+
+        self.pending: dict[str, Future[list[int]]] = {}  # 跟踪进行中的请求 {request_id: future}
         self.collect_thread = threading.Thread(
             target=self._collect_loop
         )
         self.collect_thread.start()
-        self.pending: dict[str, Future[list[int]]] = {}  # 跟踪进行中的请求 {request_id: future}
 
     def _collect_loop(self):
         while True:
@@ -75,32 +74,31 @@ class Executor:
     def shutdown(self):
         for worker in self.workers:
             worker.shutdown()
+        for worker in self.workers:
+            worker.join()
         self.driver_worker.output_queue.put_nowait("shutdown")
         self.collect_thread.join()
 
         print("Executor has been shut down.")
 
-    def execute(self, method, *args, **kwargs):
-        """发起RPC调用，返回调用结果"""
-        
+    def submit(self, method, *args, **kwargs):
+        future = Future()
         request_id = uuid.uuid4().hex
         request = {
             'method': method,
             'args': args,
             'kwargs': kwargs
         }
-        
-        future = Future()
-        self.pending[request_id] = future
         for worker in self.workers:
             worker.send_request(request_id, request)
-        return future.result()
+        self.pending[request_id] = future
+        return future
 
-    def execute_model(self, batch: ForwardBatch) -> list[int]:
-        return self.execute("execute_model", batch=batch)
+    def execute_model(self, batch: ForwardBatch) -> Future[list[int]]:
+        return self.submit("execute_model", batch)
     
     def initialize_kv_cache(self, kv_cache_size: int):
-        self.execute("initialize_kv_cache", kv_cache_size)
+        self.submit("initialize_kv_cache", kv_cache_size).result()
 
     def profile_kv_cache_size(self, gpu_memory_utilization: float) -> int:
-        return self.execute("profile_kv_cache_size", gpu_memory_utilization)
+        return self.submit("profile_kv_cache_size", gpu_memory_utilization).result()

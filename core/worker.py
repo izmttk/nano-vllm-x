@@ -1,4 +1,5 @@
 import torch
+from distributed.communication_op import send_tensor_dict, recv_tensor_dict
 from distributed.parallel_state import (
     get_world_group,
     get_tp_group,
@@ -10,6 +11,7 @@ from distributed.parallel_state import (
 )
 from core.model_runner import ModelRunner
 from core.common import ForwardBatch
+from layers.utils import IntermediateTensors
 
 class Worker:
     def __init__(
@@ -79,9 +81,28 @@ class Worker:
     def load_model(self):
         self.model_runner.load_model()
 
-    def execute_model(self, batch: ForwardBatch):
-        return self.model_runner.execute_model(batch)
-    
+    def execute_model(self, batch: ForwardBatch) -> list[int] | None:
+        intermediate_tensors = None
+        
+        if not get_pp_group().is_first_rank:
+            # print(f"Worker {self.rank} waiting to receive intermediate tensors.")
+            recv = recv_tensor_dict(group=get_pp_group(), all_gather_group=get_tp_group())
+            # print(f"Worker {self.rank} received intermediate tensors.")
+            assert recv is not None
+            intermediate_tensors = IntermediateTensors(recv)
+        # print(f"Worker {self.rank} executing model.")
+        output = self.model_runner.execute_model(batch, intermediate_tensors)
+        # print(f"Worker {self.rank} finished model execution.")
+        if not get_pp_group().is_last_rank:
+            assert isinstance(output, IntermediateTensors)
+            # print(f"Worker {self.rank} sending intermediate tensors to next PP rank.")
+            send_tensor_dict(output, group=get_pp_group(), all_gather_group=get_tp_group())
+            # print(f"Worker {self.rank} sent intermediate tensors.")
+            return None
+        
+        assert isinstance(output, torch.Tensor)
+        return output.tolist()
+
     def initialize_kv_cache(self, kv_cache_size: int):
         self.model_runner.initialize_kv_cache(kv_cache_size)
     
