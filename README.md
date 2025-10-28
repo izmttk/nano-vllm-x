@@ -1,8 +1,10 @@
-# Micro-vLLM
+# Nano-vLLM-X
+
+**Nano vLLM** with Radi**X**-Tree based Cache, and more.
 
 该项目受 [nano-vllm](https://github.com/GeeeekExplorer/nano-vllm/tree/main) 启发，提供一个从零开始构建的 LLM 推理框架
 
-程序的架构遵循了 [vLLM](https://github.com/vllm-project/vllm) v1 相似的组织安排，但是与 vLLM 不同的是，该项目的 KV 缓存系统使用的是 [SGLang](https://github.com/sgl-project/sglang) 的 Radix Cache 实现。所以可以理解为，这个项目是 vLLM 和 SGLang 杂交的产物 🤣。
+程序的架构遵循了 [vLLM](https://github.com/vllm-project/vllm) v1 相似的组织安排，但是与 vLLM 不同的是，该项目的 KV 缓存系统使用的是 [SGLang](https://github.com/sgl-project/sglang) 的 Radix Cache 实现。
 
 ## Features
 
