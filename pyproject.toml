@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nano-vllm-x"
+version = "0.1.0"
+description = "A minimal vLLM-like LLM distributed inference framework with radix-tree based cache"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "izmttk" }]
+dependencies = [
+    "torch>=2.8.0",
+    "triton>=3.0.0",
+    "transformers>=4.51.0",
+    "fastapi>=0.95.0",
+    "flashinfer-python>=0.2.0",
+    "psutil",
+]
+
+[project.urls]
+Homepage = "https://github.com/izmttk/nano-vllm-x"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = ["nanovllmx"]
+

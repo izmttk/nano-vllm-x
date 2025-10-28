@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributed as dist
-from distributed.parallel_state import get_tp_group
-from distributed.communication_op import tensor_model_parallel_all_gather, tensor_model_parallel_all_reduce
+from ..distributed.parallel_state import get_tp_group
+from ..distributed.communication_op import tensor_model_parallel_all_gather, tensor_model_parallel_all_reduce
 
 from .utils import divide, ensure_divisibility
 

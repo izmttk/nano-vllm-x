@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from core.kv_cache import KVCachePool
-from core.common import ForwardMode, ForwardBatch
-from core.cuda_graph import CUDAGraph
+from ..core.kv_cache import KVCachePool
+from ..core.common import ForwardMode, ForwardBatch
+from ..core.cuda_graph import CUDAGraph
 
 from flashinfer import (
     BatchDecodeWithPagedKVCacheWrapper,

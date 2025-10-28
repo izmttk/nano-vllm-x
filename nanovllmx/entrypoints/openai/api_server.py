@@ -11,17 +11,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from entrypoints.openai.protocol import (
+from .protocol import (
     ChatCompletionRequest,
     CompletionRequest,
     ErrorResponse,
     ModelCard,
     ModelList,
 )
-from core.llm import LLM
-from entrypoints.openai.serving_chat import OpenAIServingChat
-from entrypoints.openai.serving_completion import OpenAIServingCompletion
-from entrypoints.utils import with_cancellation
+from nanovllmx.llm import LLM
+from .serving_chat import OpenAIServingChat
+from .serving_completion import OpenAIServingCompletion
+from ..utils import with_cancellation
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds
 
@@ -124,7 +124,7 @@ if __name__ == "__main__":
         "--context-len",
         type=int,
         default=2048,
-        help="Max context length for CUDA graph capture",
+        help="Max context length of the model",
     )
     parser.add_argument(
         "--enforce-eager",

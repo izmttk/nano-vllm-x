@@ -1,6 +1,6 @@
 from typing import AsyncGenerator
-from core.engine_client import EngineClient
-from core.common import SamplingParams, GenerateOutput
+from .core.engine_client import EngineClient
+from .core.common import SamplingParams, GenerateOutput
 import asyncio
 from transformers import AutoTokenizer, PreTrainedTokenizer
 import uuid

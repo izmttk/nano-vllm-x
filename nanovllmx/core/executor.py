@@ -2,8 +2,8 @@ import os
 import uuid
 import threading
 from concurrent.futures import Future
-from core.worker_client import WorkerClient
-from core.common import ForwardBatch
+from .worker_client import WorkerClient
+from .common import ForwardBatch
 
 class Executor:
     def __init__(

@@ -1,7 +1,7 @@
 from typing import Optional
-from core.worker import Worker
+from .worker import Worker
 import torch.multiprocessing as mp
-from utils import bind_parent_process_lifecycle
+from ..utils import bind_parent_process_lifecycle
 
 class WorkerClient:
     def __init__(

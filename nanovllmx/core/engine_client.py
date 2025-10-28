@@ -1,7 +1,7 @@
-from core.engine import Engine, EngineOutput
-from core.common import SamplingParams
+from .engine import Engine, EngineOutput
+from .common import SamplingParams
 import torch.multiprocessing as mp
-from utils import bind_parent_process_lifecycle
+from ..utils import bind_parent_process_lifecycle
 import os
 
 class EngineClient:

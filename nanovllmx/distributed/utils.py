@@ -1,4 +1,3 @@
-
 def get_pp_indices(
     num_hidden_layers: int, pp_rank: int, pp_size: int
 ) -> tuple[int, int]:

@@ -1,17 +1,17 @@
 import torch
-from distributed.communication_op import send_tensor_dict, recv_tensor_dict
-from distributed.parallel_state import (
+from ..distributed.communication_op import send_tensor_dict, recv_tensor_dict
+from ..distributed.parallel_state import (
     get_world_group,
     get_tp_group,
     get_pp_group,
     init_distributed_environment,
     initialize_model_parallel,
     destroy_distributed_environment,
-    destroy_model_parallel
+    destroy_model_parallel,
 )
-from core.model_runner import ModelRunner
-from core.common import ForwardBatch
-from layers.utils import IntermediateTensors
+from .model_runner import ModelRunner
+from .common import ForwardBatch
+from ..layers.utils import IntermediateTensors
 
 class Worker:
     def __init__(

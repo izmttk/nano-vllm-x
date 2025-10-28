@@ -3,9 +3,9 @@ from typing import Union
 
 from fastapi.responses import JSONResponse
 
-from core.llm import LLM
-from core.common import SamplingParams
-from entrypoints.openai.protocol import (
+from nanovllmx.llm import LLM
+from nanovllmx.core.common import SamplingParams
+from .protocol import (
     ErrorResponse,
     CompletionRequest,
     ChatCompletionRequest,

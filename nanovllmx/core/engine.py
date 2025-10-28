@@ -1,8 +1,8 @@
 from concurrent.futures import Future
 import queue
-from core.common import FinishReason, ForwardBatch, SamplingParams, Sequence, EngineOutput
-from core.executor import Executor
-from core.scheduler import Scheduler
+from .common import FinishReason, ForwardBatch, SamplingParams, Sequence, EngineOutput
+from .executor import Executor
+from .scheduler import Scheduler
 
 
 class Engine:

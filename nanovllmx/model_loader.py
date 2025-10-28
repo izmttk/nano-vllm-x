@@ -6,7 +6,7 @@ from tqdm import tqdm
 from safetensors import safe_open
 import glob
 import os
-from distributed.parallel_state import is_initialized, get_world_group
+from .distributed.parallel_state import is_initialized, get_world_group
 
 def default_weight_loader(param: torch.Tensor,
                           loaded_weight: torch.Tensor) -> None:

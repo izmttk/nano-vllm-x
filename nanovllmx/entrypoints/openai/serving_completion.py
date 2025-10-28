@@ -4,7 +4,7 @@ from typing import AsyncGenerator
 
 from fastapi.responses import StreamingResponse
 
-from entrypoints.openai.protocol import (
+from .protocol import (
     CompletionRequest,
     CompletionResponse,
     CompletionResponseChoice,
@@ -12,7 +12,7 @@ from entrypoints.openai.protocol import (
     CompletionStreamResponse,
     UsageInfo,
 )
-from entrypoints.openai.serving_engine import OpenAIServing
+from .serving_engine import OpenAIServing
 
 
 class OpenAIServingCompletion(OpenAIServing):

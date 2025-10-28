@@ -5,18 +5,26 @@ import torch
 from torch import nn
 from transformers.models.qwen3 import Qwen3Config
 
-from distributed.parallel_state import get_tp_group, get_pp_group
-from distributed.utils import get_pp_indices
+from ..distributed.parallel_state import get_tp_group, get_pp_group
+from ..distributed.utils import get_pp_indices
+from ..distributed.parallel_state import get_tp_group, get_pp_group
+from ..distributed.utils import get_pp_indices
 
-from layers.attention import Attention
-from layers.activation import SiluAndMul
-from layers.layernorm import RMSNorm
-from layers.linear import MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear
-from layers.rotary_embedding import RotaryEmbedding
-from layers.vocab_parallel_embedding import ParallelLMHead, VocabParallelEmbedding
-from layers.utils import IntermediateTensors, PPMissingLayer, get_layer_id
+from ..layers.attention import Attention
+from ..layers.activation import SiluAndMul
+from ..layers.layernorm import RMSNorm
+from ..layers.linear import MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear
+from ..layers.rotary_embedding import RotaryEmbedding
+from ..layers.vocab_parallel_embedding import ParallelLMHead, VocabParallelEmbedding
+from ..layers.attention import Attention
+from ..layers.activation import SiluAndMul
+from ..layers.layernorm import RMSNorm
+from ..layers.utils import IntermediateTensors, PPMissingLayer, get_layer_id
 
-from model_loader import default_weight_loader
+from ..model_loader import default_weight_loader
+from ..layers.linear import MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear
+from ..layers.rotary_embedding import RotaryEmbedding
+from ..layers.vocab_parallel_embedding import ParallelLMHead, VocabParallelEmbedding
 
 class Qwen3MLP(nn.Module):
 

@@ -1,14 +1,14 @@
 from collections import deque
 from typing import Deque
 
-from core.common import (
+from .common import (
     Sequence,
     SequenceStatus,
     ForwardMode,
     ForwardBatch,
 )
 
-from core.kv_cache import KVCacheManager
+from .kv_cache import KVCacheManager
 
 class Scheduler:
     """
@@ -20,7 +20,7 @@ class Scheduler:
     Notes
     -----
     - Policy: prefill-first. If there are waiting sequences, schedule a prefill batch.
-      Otherwise schedule a decode batch from running sequences (round-robin).
+      Otherwise schedule a decode batch from running sequences.
     - For KV cache:
         * On adding a new sequence, KV slots are reserved for the prompt length.
         * When appending new tokens (decode outputs), reserve 1 slot per token.

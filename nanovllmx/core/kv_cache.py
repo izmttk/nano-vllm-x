@@ -6,7 +6,7 @@ import time
 import triton
 import triton.language as tl
 
-from core.common import Sequence, SequenceStatus
+from .common import Sequence, SequenceStatus
 
 
 @triton.jit

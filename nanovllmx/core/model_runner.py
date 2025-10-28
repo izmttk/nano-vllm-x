@@ -1,16 +1,16 @@
 import torch
-from model_loader import load_model
-from models.registry import MODEL_REGISTRY
+from ..model_loader import load_model
+from ..models.registry import MODEL_REGISTRY
 from transformers import AutoConfig, PretrainedConfig
-from layers.sampler import Sampler
-from core.kv_cache import KVCachePool
-from core.common import ForwardBatch, ForwardMode
-from core.cuda_graph import CUDAGraph
-from distributed.communication_op import all_gather
-from distributed.parallel_state import get_tp_group, get_pp_group
-from distributed.utils import get_pp_indices
-from layers.utils import IntermediateTensors
-from layers.attention import attention_kv_cache, AttentionBackend
+from ..layers.sampler import Sampler
+from .kv_cache import KVCachePool
+from .common import ForwardBatch, ForwardMode
+from .cuda_graph import CUDAGraph
+from ..distributed.communication_op import all_gather
+from ..distributed.parallel_state import get_tp_group, get_pp_group
+from ..distributed.utils import get_pp_indices
+from ..layers.utils import IntermediateTensors
+from ..layers.attention import attention_kv_cache, AttentionBackend
 import os
 import gc
 

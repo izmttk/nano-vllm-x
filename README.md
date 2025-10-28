@@ -9,9 +9,10 @@
 ## Features
 
 - 轻量但完整的代码实现
-- 持续批处理（Continuous Batching）
-- OpenAI 兼容的 API
+- FCFS 调度和持续批处理（Continuous Batching）
+- [OpenAI 兼容 API](https://platform.openai.com/docs/api-reference/chat/create) 服务
 - 基于 Radix Tree 的 Prefix Caching
+- Flash Attention 算子支持（[FlashInfer](https://github.com/flashinfer-ai/flashinfer) 实现）
 - 张量并行（Tensor Parallelism）
 - 流水线并行（Pipeline Parallelism）
 - CUDA Graph 支持（仅 Decoding 阶段）
@@ -20,6 +21,7 @@
 
 ```plaintext
 torch >= 2.8.0
+triton >= 3.0.0
 transformers >= 4.51.0
 fastapi >= 0.95.0
 flashinfer-python >= 0.2.0
@@ -32,8 +34,32 @@ NOTE: 我发现当 nccl 版本 < 2.27.3 时，分布式环境的销毁会存在�
 
 启动 API 服务
 
-```bash
-python3 -m entrypoints.openai.api --model <model_path> --host 0.0.0.0 --port 8000
+```plaintext
+example:
+python -m nanovllmx.entrypoints.openai.api_server --model Qwen3-0.6B --gpu-memory-utilization 0.9 --tp-size 2 --pp-size 2 --context-len 4096 --host 0.0.0.0 --port 8000
+
+usage: api_server.py [-h] [--host HOST] [--port PORT] --model MODEL [--gpu-memory-utilization GPU_MEMORY_UTILIZATION] [--max-bs MAX_BS] [--tp-size TP_SIZE] [--pp-size PP_SIZE]
+                     [--nccl-port NCCL_PORT] [--device-ids DEVICE_IDS] [--context-len CONTEXT_LEN] [--enforce-eager]
+
+LLM Distributed OpenAI-Compatible API Server
+
+options:
+  -h, --help            show this help message and exit
+  --host HOST           Host name
+  --port PORT           Port number
+  --model MODEL         Model name
+  --gpu-memory-utilization GPU_MEMORY_UTILIZATION
+                        GPU memory utilization
+  --max-bs MAX_BS       Maximum batch size
+  --tp-size TP_SIZE     Tensor parallel size
+  --pp-size PP_SIZE     Pipeline parallel size
+  --nccl-port NCCL_PORT
+                        NCCL port for distributed run
+  --device-ids DEVICE_IDS
+                        Comma-separated list of GPU device IDs to use
+  --context-len CONTEXT_LEN
+                        Max context length of the model
+  --enforce-eager       Enforce eager execution, disable CUDA graph
 ```
 
 Offline Inference
@@ -75,9 +101,10 @@ Results:
 
 ## TODO
 
+- Request Aborting
 - Graceful Shutdown
 - Better Logging System
 - Benchmark Metrics on API Server
 - More Configurable Options
 
-[WIP]
+Further development is still ongoing.

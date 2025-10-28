@@ -4,7 +4,7 @@ from typing import AsyncGenerator
 
 from fastapi.responses import StreamingResponse
 
-from entrypoints.openai.protocol import (
+from .protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatCompletionResponseChoice,
@@ -14,7 +14,7 @@ from entrypoints.openai.protocol import (
     DeltaMessage,
     UsageInfo,
 )
-from entrypoints.openai.serving_engine import OpenAIServing
+from .serving_engine import OpenAIServing
 
 
 class OpenAIServingChat(OpenAIServing):
