@@ -142,6 +142,9 @@ class Engine:
             return True, FinishReason.LENGTH
         
         return False, None
+    
+    def wait_until_ready(self):
+        self.model_executor.wait_until_ready()
 
     def shutdown(self):
         self.model_executor.shutdown()

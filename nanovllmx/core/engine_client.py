@@ -31,6 +31,8 @@ class EngineClient:
         self.input_queue = self.mp_ctx.Queue()
         self.output_queue = self.mp_ctx.Queue()
         
+        self.ready_event = self.mp_ctx.Event()
+        
         self.init_process()
 
     def init_process(self):
@@ -54,6 +56,9 @@ class EngineClient:
             enforce_eager=self.enforce_eager,
             context_len=self.context_len,
         )
+        engine.wait_until_ready()
+        self.ready_event.set()
+        
         while True:
             is_shutdown = False
             # 如果 engine 中没有未完成的请求了，即 engine 的 waiting 和 running 队列都空了
@@ -83,6 +88,9 @@ class EngineClient:
 
         self.output_queue.put_nowait(None)
         engine.shutdown()
+    
+    def wait_until_ready(self):
+        self.ready_event.wait()
 
     def shutdown(self):
         self.input_queue.put_nowait("shutdown")

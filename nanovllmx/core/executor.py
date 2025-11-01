@@ -47,8 +47,6 @@ class Executor:
                 if is_driver_worker:
                     self.driver_worker = worker
                 self.workers.append(worker)
-        for worker in self.workers:
-            worker.wait_until_ready()
 
         self.pending: dict[str, Future[list[int]]] = {}  # 跟踪进行中的请求 {request_id: future}
         self.collect_thread = threading.Thread(
@@ -70,6 +68,10 @@ class Executor:
                 else:
                     future.set_exception(Exception(data['error']))
         print("Executor stopped response collection.")
+
+    def wait_until_ready(self):
+        for worker in self.workers:
+            worker.wait_until_ready()
 
     def shutdown(self):
         for worker in self.workers:

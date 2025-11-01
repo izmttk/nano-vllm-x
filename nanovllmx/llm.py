@@ -81,7 +81,7 @@ class LLM:
         return self.tokenizer.batch_decode(token_ids, skip_special_tokens=True)
     
     async def ready(self):
-        pass
+        await self.event_loop.run_in_executor(None, self.engine.wait_until_ready)
     
     async def generate(
         self,

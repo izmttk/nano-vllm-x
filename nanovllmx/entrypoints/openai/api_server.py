@@ -40,6 +40,7 @@ async def lifespan(app: fastapi.FastAPI):
         enforce_eager=args.enforce_eager,
         context_len=args.context_len,
     )
+    await engine.ready()
 
     app.state.model_name = args.model
     app.state.serving_chat = OpenAIServingChat(engine, args.model)
