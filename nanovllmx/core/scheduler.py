@@ -36,6 +36,8 @@ class Scheduler:
     ):
         self.kv_cache_size = kv_cache_size
         self.max_bs = max_bs
+        
+        self.sequences: dict[str, Sequence] = {}  # All sequences by seq_id
 
         # Queues and registries
         self.waiting: Deque[Sequence] = deque()
@@ -53,6 +55,7 @@ class Scheduler:
         """
         seq.status = SequenceStatus.WAITING
         self.waiting.append(seq)
+        self.sequences[seq.seq_id] = seq
 
     def schedule(self) -> ForwardBatch | None:
         """
@@ -149,6 +152,12 @@ class Scheduler:
         seq.status = SequenceStatus.WAITING
         self.waiting.appendleft(seq)  # Preempt to the front of waiting queue
 
+    def get_sequence(self, sequence_id: str) -> Sequence | None:
+        """
+        Get a sequence by its ID.
+        """
+        return self.sequences.get(sequence_id, None)
+
     def update_sequence(self, seq: Sequence, new_token_id: int):
         """
         Update a sequence after model execution.
@@ -178,6 +187,7 @@ class Scheduler:
         
         seq.status = SequenceStatus.FINISHED
         self.kv_manager.cache_sequence(seq)
+        self.sequences.pop(seq.seq_id, None)
 
     def has_unfinished_sequences(self) -> bool:
         return bool(self.waiting or self.running)

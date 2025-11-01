@@ -67,6 +67,16 @@ class Engine:
             sampling_params=sampling_params,
         )
         self.scheduler.add_sequence(seq)
+        print(f"Added sequence {sequence_id}")
+    
+    def abort_sequence(self, sequence_id: str):
+        """
+        Abort a sequence in the engine's scheduler.
+        """
+        seq = self.scheduler.get_sequence(sequence_id)
+        if seq:
+            self.scheduler.finish_sequence(seq)
+        print(f"Aborted sequence {sequence_id}")
 
     def step(self) -> list[EngineOutput]:
         """

@@ -64,20 +64,28 @@ class EngineClient:
             # 如果 engine 中没有未完成的请求了，即 engine 的 waiting 和 running 队列都空了
             # 则在调用下一次 step 之前，阻塞等待一个新的请求
             if not engine.has_unfinished_sequences():
-                msg = self.input_queue.get()
-                if msg == "shutdown":
+                method, *params = self.input_queue.get()
+                if method == "shutdown":
                     is_shutdown = True
+                elif method == "abort":
+                    engine.abort_sequence(*params)
+                elif method == "add":
+                    engine.add_sequence(*params)
                 else:
-                    engine.add_sequence(*msg)
+                    raise ValueError(f"Unknown method: {method}")
             
             # 其他情况下，即存在未完成的请求，则需要继续调用 step
             while not self.input_queue.empty():
-                msg = self.input_queue.get()
-                if msg == "shutdown":
+                method, *params = self.input_queue.get()
+                if method == "shutdown":
                     is_shutdown = True
                     break
+                elif method == "abort":
+                    engine.abort_sequence(*params)
+                elif method == "add":
+                    engine.add_sequence(*params)
                 else:
-                    engine.add_sequence(*msg)
+                    raise ValueError(f"Unknown method: {method}")
                     
             if is_shutdown:
                 break
@@ -93,7 +101,7 @@ class EngineClient:
         self.ready_event.wait()
 
     def shutdown(self):
-        self.input_queue.put_nowait("shutdown")
+        self.input_queue.put_nowait(("shutdown",))
         self.engine_process.join()
         print("Engine has been shut down.")
 
@@ -104,12 +112,11 @@ class EngineClient:
         sampling_params: SamplingParams
     ):
         self.input_queue.put_nowait(
-            (sequence_id, prompt_token_ids, sampling_params)
+            ("add", sequence_id, prompt_token_ids, sampling_params)
         )
 
     def get_output(self) -> list[EngineOutput]:
         return self.output_queue.get()
 
     def abort_sequence(self, sequence_id: str):
-        # TODO: need implement abort in engine
-        pass
+        self.input_queue.put_nowait(("abort", sequence_id))
