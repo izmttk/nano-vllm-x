@@ -101,7 +101,6 @@ Results:
 
 ## TODO
 
-- Request Aborting
 - Graceful Shutdown
 - Better Logging System
 - Benchmark Metrics on API Server
